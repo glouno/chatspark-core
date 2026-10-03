@@ -1,0 +1,7 @@
+profile_version: 2
+corpus:
+  name: example
+  display_name: Synthetic example corpus
+retrieval:
+  enable_dense: false
+  enable_sparse: true

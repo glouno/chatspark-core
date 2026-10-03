@@ -1,0 +1,29 @@
+[
+  {
+    "name": "libxml2",
+    "version": "2.15.4",
+    "url": "https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.4.tar.xz",
+    "sha256": "98087fd181d9070724f3fbc65c7377db03038eb92bd882374daff44940138821",
+    "sha3_256": "404ba814eca00bd6a6681dfd575e9d40975ed9ffa7c17222435bfb42810334c4",
+    "bytes": 3177444,
+    "vendor_checksum_url": "https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.4.sha256sum"
+  },
+  {
+    "name": "libxslt",
+    "version": "1.1.45",
+    "url": "https://download.gnome.org/sources/libxslt/1.1/libxslt-1.1.45.tar.xz",
+    "sha256": "9acfe68419c4d06a45c550321b3212762d92f41465062ca4ea19e632ee5d216e",
+    "sha3_256": "ac90e0851246088eab2c71008c0b72246eada110e1f23a109383089c88d846d6",
+    "bytes": 1519992,
+    "vendor_checksum_url": "https://download.gnome.org/sources/libxslt/1.1/libxslt-1.1.45.sha256sum"
+  },
+  {
+    "name": "sqlite",
+    "version": "3.53.4",
+    "url": "https://sqlite.org/2026/sqlite-autoconf-3530400.tar.gz",
+    "sha256": "0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c",
+    "sha3_256": "454e45f61c6bd75b7420e7190732dea03ce6639c63ada47bbc592f67fc340338",
+    "bytes": 3283177,
+    "vendor_checksum_url": "https://sqlite.org/download.html"
+  }
+]

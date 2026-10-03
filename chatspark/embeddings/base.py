@@ -1,0 +1,13 @@
+from collections.abc import Sequence
+from typing import Protocol
+
+
+class Embedder(Protocol):
+    @property
+    def model_name(self) -> str: ...
+
+    def embed_texts(self, texts: Sequence[str]) -> list[list[float]]: ...
+
+    def embed_query_texts(self, texts: Sequence[str]) -> list[list[float]]: ...
+
+    def embed_document_texts(self, texts: Sequence[str]) -> list[list[float]]: ...

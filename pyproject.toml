@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chatspark-core"
+version = "0.3.0rc2"
+description = "Source-available corpus-agnostic grounded retrieval engine"
+readme = "README.md"
+license = "Elastic-2.0"
+requires-python = ">=3.11,<3.12"
+dependencies = ["alembic>=1.17", "beautifulsoup4>=4.14", "markdownify>=1.2", "pdfminer.six>=20250506", "pydantic>=2.12", "pydantic-settings>=2.12", "pyyaml>=6", "requests>=2.32", "sqlalchemy>=2", "trafilatura>=2", "typer>=0.21", "python-docx>=1.2", "python-pptx>=1", "openpyxl>=3.1"]
+
+[project.scripts]
+chatspark = "chatspark.main:app"
+
+[project.optional-dependencies]
+serve = ["fastapi>=0.115", "uvicorn>=0.34", "python-multipart>=0.0.21"]
+qdrant = ["qdrant-client==1.16.2"]
+pdf-pypdf = ["pypdf==6.19.0"]
+pdf-plumber = ["pdfplumber==0.11.10"]
+pdf-pdfium = ["pypdfium2==5.13.0"]
+ocr = ["pypdfium2==5.13.0", "pillow==12.3.0"]
+local-embeddings = ["fastembed>=0.5"]
+sentence-transformers = ["sentence-transformers>=3"]
+
+[dependency-groups]
+dev = ["pytest>=9", "ruff>=0.16", "httpx>=0.28"]
+
+[tool.setuptools.packages.find]
+include = ["chatspark*"]
+[tool.setuptools.package-data]
+chatspark = ["profiles/bundled/*/*.yaml", "prompts/*/*/*.md", "migrations/*.mako", "serve/*.html", "embeddings/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

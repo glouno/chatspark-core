@@ -1,0 +1,115 @@
+name: Core quality
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: core-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CHATSPARK_STATE_ROOT: /tmp/chatspark-core-ci-${{ github.run_id }}
+      OBS_REQUEST_TRACE_ENABLED: 'false'
+      OBS_CONVERSATION_STORE_ENABLED: 'false'
+      LANGFUSE_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+      - run: uv sync --frozen --group dev --extra serve --extra qdrant --extra pdf-pypdf --extra pdf-plumber --extra pdf-pdfium
+      - name: Explicit optional OCR tools and languages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr=5.3.4-1build5 tesseract-ocr-eng=1:4.1.0-2 tesseract-ocr-fra=1:4.1.0-2
+      - run: uv run --frozen ruff check chatspark tests scripts
+      - run: uv run --frozen ruff format --check chatspark tests scripts
+      - run: uv run --frozen python scripts/audit.py
+      - run: uv pip check
+      - run: uv run --frozen pytest -q
+      - name: Deterministic Qdrant integration
+        run: |
+          docker run -d --name core-ci-qdrant -p 127.0.0.1:26333:6333 qdrant/qdrant:v1.16.3@sha256:0425e3e03e7fd9b3dc95c4214546afe19de2eb2e28ca621441a56663ac6e1f46
+          for attempt in $(seq 1 30); do curl -fsS http://127.0.0.1:26333/readyz && break || sleep 1; done
+          CHATSPARK_TEST_QDRANT_URL=http://127.0.0.1:26333 uv run --frozen pytest -q tests/test_qdrant_integration.py
+      - if: always()
+        run: docker rm -f core-ci-qdrant || true
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+      - run: uv build
+      - name: Independent wheel and sdist installations
+        run: |
+          uv venv --python 3.11 "$RUNNER_TEMP/wheel-env"
+          uv pip install --python "$RUNNER_TEMP/wheel-env/bin/python" dist/*.whl
+          uv pip check --python "$RUNNER_TEMP/wheel-env/bin/python"
+          cp scripts/install_smoke.py "$RUNNER_TEMP/install_smoke.py"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheel-env/bin/python" install_smoke.py
+          uv venv --python 3.11 "$RUNNER_TEMP/sdist-env"
+          uv pip install --python "$RUNNER_TEMP/sdist-env/bin/python" "$GITHUB_WORKSPACE"/dist/*.tar.gz
+          "$RUNNER_TEMP/sdist-env/bin/python" install_smoke.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: core-candidate-distributions
+          path: dist/*
+          retention-days: 14
+
+  artifact-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+      - name: Install checksummed audit tools
+        run: |
+          curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz -o /tmp/gitleaks.tar.gz
+          curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt -o /tmp/gitleaks-checksums.txt
+          cd /tmp
+          awk '$2=="gitleaks_8.30.1_linux_x64.tar.gz" {print $1 "  gitleaks.tar.gz"}' gitleaks-checksums.txt | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          echo '88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509  /tmp/gitleaks' | sha256sum -c -
+          curl -fsSL https://github.com/anchore/syft/releases/download/v1.54.0/syft_1.54.0_linux_amd64.tar.gz -o /tmp/syft.tar.gz
+          tar xzf syft.tar.gz syft
+          echo 'd46a9a61a6ae3d367f0a03748c5e9c59253e586c4388ab26ddcacebc2efa0d92  /tmp/syft' | sha256sum -c -
+      - name: Scan full source history and distribution contents
+        run: |
+          /tmp/gitleaks git . --redact
+          uv build
+          mkdir -p /tmp/core-artifact-content
+          python3 -c 'import glob,zipfile; zipfile.ZipFile(glob.glob("dist/*.whl")[0]).extractall("/tmp/core-artifact-content")'
+          python3 -c 'import glob,tarfile; tarfile.open(glob.glob("dist/*.tar.gz")[0]).extractall("/tmp/core-artifact-content", filter="data")'
+          /tmp/gitleaks dir /tmp/core-artifact-content --redact
+      - name: Inventory actual baseline image and Python notices
+        run: |
+          mkdir -p /tmp/core-dossier/python-notices
+          docker build --build-arg ENGINE_REVISION="$GITHUB_SHA" -t core-ci-audit .
+          docker run --rm --entrypoint python -v "$PWD/scripts/install_smoke.py:/tmp/install_smoke.py:ro" core-ci-audit /tmp/install_smoke.py
+          /tmp/syft docker:core-ci-audit -o spdx-json=/tmp/core-dossier/image.spdx.json
+          docker run --rm --user 0 --entrypoint python -v "$PWD/scripts/licenses.py:/tmp/licenses.py:ro" -v /tmp/core-dossier/python-notices:/inventory core-ci-audit /tmp/licenses.py /inventory
+          docker run --rm --entrypoint tar core-ci-audit -czf - /usr/share/doc > /tmp/core-dossier/os-notices.tar.gz
+          docker image inspect core-ci-audit > /tmp/core-dossier/image-manifest.json
+          sha256sum dist/* > /tmp/core-dossier/distribution-hashes.txt
+      - name: Scan complete exported image filesystem
+        run: |
+          scan_container=$(docker create core-ci-audit)
+          docker export "$scan_container" -o /tmp/core-image-filesystem.tar
+          docker rm "$scan_container"
+          python3 scripts/image_scan.py /tmp/core-image-filesystem.tar /tmp/core-image-files --report /tmp/core-dossier/image-scan-coverage.json
+          /tmp/gitleaks dir /tmp/core-image-files --redact --max-target-megabytes 512 --max-decode-depth 2 --max-archive-depth 2 --report-format json --report-path /tmp/core-dossier/image-secrets.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: core-audit-dossier
+          path: /tmp/core-dossier
+          retention-days: 14

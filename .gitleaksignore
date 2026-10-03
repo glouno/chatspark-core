@@ -1,0 +1,5 @@
+# Reviewed false positives: public model-file SHA-256 checksums, not credentials.
+# Exact historical fingerprints only; token files and future commits remain scanned.
+8f6b62a9b4cc13ff7fdddba15d3444667cecd62f:chatspark/embeddings/multilingual-e5-small.json:generic-api-key:15
+8f6b62a9b4cc13ff7fdddba15d3444667cecd62f:chatspark/embeddings/multilingual-e5-small.json:generic-api-key:16
+8f6b62a9b4cc13ff7fdddba15d3444667cecd62f:chatspark/embeddings/multilingual-e5-small.json:generic-api-key:17

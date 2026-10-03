@@ -1,0 +1,7 @@
+profile_version: 2
+corpus:
+  name: local
+  display_name: Local document corpus
+retrieval:
+  enable_dense: true
+  enable_sparse: true

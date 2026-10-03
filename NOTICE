@@ -1,0 +1,31 @@
+ChatSpark Core
+Copyright (c) 2025-2026 Paul Béglin.
+
+Owned source is licensed under Elastic License 2.0. Dependencies retain their
+own licenses. Release artifact inventories and bundled notices accompany the
+reviewed candidate. Previously granted rights are not revoked by this release.
+
+Container packaging excludes lxml's unused isoschematron implementation/resources
+because their bundled transformations have unresolved redistribution provenance.
+The engine uses lxml HTML/XML parsing, not that optional validator. Third-party
+source and notices for distributed native/OS components accompany image review.
+
+The Linux baseline image builds lxml 6.1.3 from its hash-pinned source against
+Debian shared libxml2/libxslt libraries. It excludes the upstream wheel statically
+bundled GNU libiconv. The image build recipes and exact Debian source/notice
+inventory form part of the candidate redistribution dossier.
+
+Runtime images exclude pip/setuptools/wheel and their unused Windows launchers
+after installation. Build tools remain only in the non-distributed build stage.
+
+Office import dependencies are retained; unused document-creation templates,
+thumbnails and printer metadata are excluded from the Linux baseline image.
+PDFMiner's Adobe CMap copyright/license is retained in pdfminer/cmap/README.txt
+and collected with the release notices. The final image copies only the reviewed
+filesystem so excluded resources cannot remain in preceding image layers.
+
+The Linux image builds NumPy 2.4.6 from hash-pinned source against Debian shared
+BLAS/LAPACK and GNU runtimes. It excludes the upstream wheel's vendored numerical
+libraries. The exact image notice bundle includes their licenses and matching
+corresponding-source references; Python installation extras retain their own
+upstream artifact contents and terms.

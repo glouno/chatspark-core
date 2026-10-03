@@ -1,0 +1,25 @@
+ARG CORE_IMAGE=chatspark-core:security-native-verified
+FROM ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc AS uv
+FROM python:3.11.17-slim-trixie@sha256:45037981b62b34b44602584fccbc4d884d5f7dc92c7ee86bb38a698a79fe1e51 AS ocr-builder
+RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ make automake autoconf libtool pkg-config curl ca-certificates libleptonica-dev=1.84.1-4
+RUN curl -fsSL https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz -o /tmp/tesseract.tar.gz && echo '9218e62793116d42a9f6d14cd9348518b27f382096eea3d0f2d1a24616bb5884  /tmp/tesseract.tar.gz' | sha256sum -c - && tar xf /tmp/tesseract.tar.gz -C /tmp && cd /tmp/tesseract-5.5.3 && ./autogen.sh && ./configure --prefix=/usr/local --with-curl=no --with-archive=no --disable-graphics && make -j2 && make install && mkdir -p /native-notices/tesseract && cp LICENSE /native-notices/tesseract/
+FROM ${CORE_IMAGE} AS prepared-ocr
+USER 0
+COPY --from=uv /uv /usr/local/bin/uv
+RUN apt-get update && apt-get install -y --no-install-recommends libleptonica6=1.84.1-4 libgomp1=14.2.0-19 tesseract-ocr-eng=1:4.1.0-2 tesseract-ocr-fra=1:4.1.0-2 && rm -rf /var/lib/apt/lists/*
+COPY --from=ocr-builder /usr/local/bin/tesseract /usr/local/bin/tesseract
+COPY --from=ocr-builder /usr/local/lib/libtesseract.so* /usr/local/lib/
+COPY --from=ocr-builder /native-notices /usr/local/share/chatspark/native-notices
+COPY tesseract-source.json /usr/local/share/chatspark/tesseract-source.json
+RUN ldconfig
+ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+COPY requirements-ocr.lock /tmp/requirements-ocr.lock
+RUN uv pip install --system --no-cache --no-deps --require-hashes -r /tmp/requirements-ocr.lock && uv pip check --system && rm -f /tmp/requirements-ocr.lock /usr/local/bin/uv && rm -rf /root/.cache
+FROM scratch
+COPY --from=prepared-ocr / /
+ARG ENGINE_REVISION
+LABEL org.opencontainers.image.revision="${ENGINE_REVISION}" org.opencontainers.image.licenses="Elastic-2.0"
+ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 CHATSPARK_STATE_ROOT=/state TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+WORKDIR /app
+USER 10001:10001
+CMD ["uvicorn", "chatspark.serve.api:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
