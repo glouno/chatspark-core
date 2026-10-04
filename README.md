@@ -46,7 +46,7 @@ Build a candidate with `chatspark corpus build --source PATH --output NEW_PATH
 retrieval. `--source-only` deliberately skips indexing. Lower-level engine requests
 retain explicit index control. Query and index model fingerprints must match.
 
-`chatspark profiles validate PATH` checks embedding configuration/dependencies
+`chatspark profiles validate --name PATH` checks embedding configuration/dependencies
 without contacting the endpoint or downloading a model. Serving/querying then
 requires the configured service and built index to be available.
 
@@ -54,7 +54,7 @@ requires the configured service and built index to be available.
 
 ```sh
 uv run chatspark workspace init --path /tmp/my-chat-workspace --copy-prompts --offline
-uv run chatspark profiles validate /tmp/my-chat-workspace/profiles/local/profile.yaml
+uv run chatspark profiles validate --name /tmp/my-chat-workspace/profiles/local/profile.yaml
 ```
 
 Supply owned local documents through `engine build --request … --result …` using
