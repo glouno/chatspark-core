@@ -1,6 +1,6 @@
 # ChatSpark Core
 
-A corpus-agnostic retrieval engine, staged privately for review under the
+A corpus-agnostic retrieval engine under the
 [Elastic License 2.0](LICENSE). This is source-available software.
 
 Core owns canonical SQLite evidence, ordinary sparse/dense retrieval, grounded
@@ -8,8 +8,19 @@ answers, external profiles and trusted extension contracts. Private ChatSpark
 implementations are separately installed and explicitly selected by the operator.
 No model weights, customer corpus or credentials are included.
 
-Python 3.11 and uv are required. Install with `uv sync --group dev`, then run
-`uv run chatspark --help`. Optional services and PDF providers are explicit extras.
+Python 3.11 and [uv](https://docs.astral.sh/uv/) are required.
+
+```sh
+git clone https://github.com/glouno/chatspark-core.git
+cd chatspark-core
+uv sync --frozen
+uv run --frozen chatspark --help
+```
+
+This is the 0.3.0rc2 source release. No PyPI package or hosted image is published
+by this release. Optional services and PDF providers are explicit extras; for
+example, `uv sync --frozen --extra serve --extra qdrant`. Development checks use
+`uv sync --frozen --group dev`.
 
 ## Hybrid search by default
 
@@ -71,9 +82,12 @@ provider values are preserved and validated by the selected settings model.
 
 [Native profiles](docs/NATIVE_PROFILES.md) · [Extension API](docs/EXTENSIONS.md) · [License policy](docs/LICENSE_POLICY.md)
 
-Private release staging is incomplete until hosted CI, exact wheel/image license
-inventories and the consumer compatibility review are complete. No production
-quality or PDF performance equivalence is claimed by the synthetic tests.
+The reviewed runtime snapshot is
+[`c0d9fa6d`](https://github.com/glouno/chatspark-core/commit/c0d9fa6d7bd667b2a9b18045147c8574629ef3e7).
+Publication documentation may follow that snapshot without changing the engine.
+Synthetic tests do not establish production answer quality or PDF performance
+equivalence. See [release gates](docs/RELEASE_GATES.md) and
+[security constraints](SECURITY.md) before exposing a deployment.
 
 The baseline container includes serving, SQLite retrieval and pdfminer extraction.
 Qdrant support is included in the baseline image; other PDF adapters remain explicit installation extras; the separate
@@ -88,7 +102,7 @@ profile must still explicitly select `tesseract`. Build with
 The optional image requires its own OS/native attribution and corresponding-source
 review. Neither image bundles embedding model weights.
 
-The Linux image builds lxml from source against version-pinned Debian shared
+The Linux image builds lxml from source against checksum-pinned shared
 libxml2/libxslt, avoiding the upstream wheel's statically bundled GNU libiconv.
 Corresponding source and notice bundles must accompany a reviewed image release.
 

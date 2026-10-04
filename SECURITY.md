@@ -15,9 +15,9 @@ PDF child processes bound time/input size; they do not provide a complete hostil
 file sandbox. Run ingestion as an unprivileged container with limited memory/CPU
 and no production credentials. Installed plugins are trusted executable code.
 
-Report security issues privately to the repository owner through GitHub's private
-vulnerability reporting when enabled. Do not post credentials or customer data in
-issues. Publication remains gated on an exact-artifact privacy/license review.
+Report security issues through the repository's Security tab using GitHub private
+vulnerability reporting. Do not post credentials or customer data in issues.
+Each package/image release requires an exact-artifact privacy/license review.
 
 Release image checks include a dated vulnerability database and vendor advisory
 review alongside secret, dependency-license and functionality checks. A clean

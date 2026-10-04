@@ -20,5 +20,6 @@ The owner confirmed ownership of the selected source. Contributions are accepted
 under the project license. Commercial relicensing of external contributions needs
 additional rights; no contributor license agreement is implied by this policy.
 
-This repository is private release staging. Visibility, package publication and
-production rollout require the separate reviewed release decision.
+This repository publishes reviewed source. Package/image distribution and
+production rollout have separate artifact and security gates. Building an image
+does not establish that its exact bundled dependencies and notices are reviewed.
