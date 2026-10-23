@@ -78,11 +78,18 @@ def create_answer_runtime(
         validator()
         dense = DenseLane(embedder=embedder, store=vectorstore)
     retriever = StrategyRetriever(
-        context=context, profile=profile.retrieval, registry=registry, dense=dense,
-        embedder=embedder, policy=profile.policy,
+        context=context,
+        profile=profile.retrieval,
+        registry=registry,
+        dense=dense,
+        embedder=embedder,
+        policy=profile.policy,
     )
     return SnapshotAnswerRuntime(
-        snapshot, profile, retriever, llm,
+        snapshot,
+        profile,
+        retriever,
+        llm,
         resolver=partial(resolve_messages, registry=registry),
         index_validator=validator,
         **runtime_options,

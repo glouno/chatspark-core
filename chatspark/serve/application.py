@@ -13,6 +13,7 @@ from chatspark.serve.contracts import ChatRequest, ChatResponse
 
 def create_http_app(runtime: AnswerRuntime, *, authorize: Callable[[Request], None]) -> FastAPI:
     """The host supplies authentication; this adapter never accepts a corpus selector."""
+
     @asynccontextmanager
     async def lifespan(app):
         await runtime.warmup()

@@ -78,11 +78,16 @@ with tempfile.TemporaryDirectory(prefix="core-installed-smoke-") as directory:
 
     runtime = create_answer_runtime(
         ServingSnapshotV1(
-            build_id="installed", database=context.database, corpus_id=context.corpus_id,
-            chunk_set_id=context.chunk_set_id, corpus_sha256=context.snapshot_sha256,
+            build_id="installed",
+            database=context.database,
+            corpus_id=context.corpus_id,
+            chunk_set_id=context.chunk_set_id,
+            corpus_sha256=context.snapshot_sha256,
             profile_sha256=profile_digest(profile),
         ),
-        profile=profile, registry=get_registry(allowed=[]), llm=Model(),
+        profile=profile,
+        registry=get_registry(allowed=[]),
+        llm=Model(),
     )
 
     async def answer():

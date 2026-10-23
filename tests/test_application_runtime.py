@@ -41,8 +41,11 @@ def make_runtime(candidate, **options):
     profile = load_profile("example")
     context = execution_context(candidate[0])
     snapshot = ServingSnapshotV1(
-        build_id="synthetic", database=context.database, corpus_id=context.corpus_id,
-        chunk_set_id=context.chunk_set_id, corpus_sha256=context.snapshot_sha256,
+        build_id="synthetic",
+        database=context.database,
+        corpus_id=context.corpus_id,
+        chunk_set_id=context.chunk_set_id,
+        corpus_sha256=context.snapshot_sha256,
         profile_sha256=profile_digest(profile),
     )
     return create_answer_runtime(
@@ -113,7 +116,9 @@ def test_filter_widening_and_changed_snapshot_fail_closed(candidate):
 
     async def run():
         await runtime.warmup()
-        bad = await collect(runtime, AnswerRequestV1(question="registration", filters={"doc_id": "foreign"}))
+        bad = await collect(
+            runtime, AnswerRequestV1(question="registration", filters={"doc_id": "foreign"})
+        )
         assert bad[-1].event == "error"
         assert runtime.llm.inputs == []
         with candidate[0].open("ab") as stream:

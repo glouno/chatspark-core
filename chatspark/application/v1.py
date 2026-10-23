@@ -79,8 +79,11 @@ class AnswerEventV1(StrictModel):
     @model_validator(mode="after")
     def valid_payload(self):
         models = {
-            "status": _StatusData, "token": _TokenData, "sources": _SourcesData,
-            "done": _DoneData, "error": _ErrorData,
+            "status": _StatusData,
+            "token": _TokenData,
+            "sources": _SourcesData,
+            "done": _DoneData,
+            "error": _ErrorData,
         }
         validated = models[self.event].model_validate(self.data)
         object.__setattr__(self, "data", validated.model_dump(exclude_unset=True))
@@ -113,12 +116,16 @@ def prepare_answer(payload, profile, retriever, *, resolver=resolve_messages):
     messages, metadata = resolver(payload.question, result.items, profile, context=context)
     sources = [
         SourceItem(
-            chunk_id=c.chunk_id, doc_id=c.metadata["doc_id"], url=c.metadata["url"],
+            chunk_id=c.chunk_id,
+            doc_id=c.metadata["doc_id"],
+            url=c.metadata["url"],
             title=c.metadata.get("title") or "Source",
             heading_path=c.metadata.get("heading_path") or [],
-            retrieval_corpus_id=c.metadata["corpus_id"], selected_corpus_scope="unified",
+            retrieval_corpus_id=c.metadata["corpus_id"],
+            selected_corpus_scope="unified",
         )
-        for c in result.items if c.chunk_id in metadata["included_evidence_ids"]
+        for c in result.items
+        if c.chunk_id in metadata["included_evidence_ids"]
     ]
     return messages, sources
 
@@ -176,10 +183,18 @@ class SnapshotAnswerRuntime:
     """Immutable snapshot with injected retrieval/model dependencies; no env mutation."""
 
     def __init__(
-        self, snapshot: ServingSnapshotV1, profile, retriever, llm, *,
-        max_streams=4, preparation_slots=2, preparation_wait=2.0,
+        self,
+        snapshot: ServingSnapshotV1,
+        profile,
+        retriever,
+        llm,
+        *,
+        max_streams=4,
+        preparation_slots=2,
+        preparation_wait=2.0,
         diagnostics: Callable[[Mapping[str, object]], None] | None = None,
-        resolver=resolve_messages, index_validator=None,
+        resolver=resolve_messages,
+        index_validator=None,
     ):
         if max_streams < 1 or preparation_slots < 1 or preparation_wait < 0:
             raise ValueError("Invalid capacity configuration")
@@ -197,7 +212,8 @@ class SnapshotAnswerRuntime:
         if (
             self._closed
             or Path(c.database).resolve() != s.database.resolve()
-            or c.corpus_id != s.corpus_id or c.chunk_set_id != s.chunk_set_id
+            or c.corpus_id != s.corpus_id
+            or c.chunk_set_id != s.chunk_set_id
             or c.snapshot_sha256 != s.corpus_sha256
             or profile_digest(self.profile) != s.profile_sha256
             or snapshot_digest(s.database) != s.corpus_sha256
@@ -244,7 +260,8 @@ class SnapshotAnswerRuntime:
             )
             parts = []
             provider_stream = self.llm.stream_chat(
-                messages, max_tokens=self.profile.generation.max_tokens,
+                messages,
+                max_tokens=self.profile.generation.max_tokens,
             )
             control.attach(provider_stream)
             for delta in provider_stream:
@@ -261,15 +278,24 @@ class SnapshotAnswerRuntime:
             metadata = getattr(provider_stream, "get_metadata", lambda: {})()
             if self._diagnostics:
                 self._diagnostics({"sources": len(sources), "answer_chars": len(answer)})
-            yield AnswerEventV1(event="done", data={
-                "answer": answer, "sources": [s.model_dump() for s in sources],
-                "corpus_scope": "unified", "usage": metadata.get("usage"),
-                "gateway_attempt_id": metadata.get("gateway_attempt_id"),
-            })
+            yield AnswerEventV1(
+                event="done",
+                data={
+                    "answer": answer,
+                    "sources": [s.model_dump() for s in sources],
+                    "corpus_scope": "unified",
+                    "usage": metadata.get("usage"),
+                    "gateway_attempt_id": metadata.get("gateway_attempt_id"),
+                },
+            )
         except Exception:
-            yield AnswerEventV1(event="error", data={
-                "code": "generation_error", "message": "Chat request failed",
-            })
+            yield AnswerEventV1(
+                event="error",
+                data={
+                    "code": "generation_error",
+                    "message": "Chat request failed",
+                },
+            )
         finally:
             if provider_stream is not None and hasattr(provider_stream, "close"):
                 provider_stream.close()
