@@ -8,7 +8,7 @@ from chatspark.prompts import load_prompt
 from chatspark.storage.evidence import EvidenceStore
 
 
-def resolve_messages(question, chunks, profile, *, context=None):
+def resolve_messages(question, chunks, profile, *, context=None, registry=None):
     if context is not None:
         chunks = EvidenceStore(context.database).resolve(
             [RankedEvidence(c.chunk_id, c.score) for c in chunks], context
@@ -31,7 +31,8 @@ def resolve_messages(question, chunks, profile, *, context=None):
         from chatspark.runtime.registry import get_registry
 
         try:
-            resolved = get_registry().resolve(policy.remote_prompt, "prompt").get_system_prompt()
+            selected_registry = registry if registry is not None else get_registry()
+            resolved = selected_registry.resolve(policy.remote_prompt, "prompt").get_system_prompt()
             if not isinstance(resolved, ResolvedPrompt) or not resolved.text.strip():
                 raise ValueError("Invalid remote prompt")
             system = resolved.text

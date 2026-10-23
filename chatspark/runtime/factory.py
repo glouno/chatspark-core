@@ -64,9 +64,9 @@ def get_vectorstore():
 
 
 class DenseLane:
-    def __init__(self):
-        self.embedder = get_embedder()
-        self.store = get_vectorstore()
+    def __init__(self, *, embedder=None, store=None):
+        self.embedder = get_embedder() if embedder is None else embedder
+        self.store = get_vectorstore() if store is None else store
 
     def retrieve(self, query, limit, context):
         from chatspark.plugins.contracts import RankedEvidence

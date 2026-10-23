@@ -47,6 +47,56 @@ def test_candidate_dense_index_and_canonical_filtering(tmp_path, monkeypatch):
         assert chunks
         assert all(c.metadata["chunk_set_id"] == result.chunk_set_id for c in chunks)
         assert not retriever.retrieve("registration", 3, {"doc_id": "unavailable"})
+        import asyncio
+
+        from chatspark.application import (
+            AnswerRequestV1,
+            ServingSnapshotV1,
+            create_answer_runtime,
+            profile_digest,
+        )
+        from chatspark.runtime.embedding_manifest import embedding_fingerprint
+        from chatspark.storage.qdrant import QdrantVectorStore
+
+        class Model:
+            def stream_chat(self, messages, *, max_tokens):
+                assert "ORCHID-42" in messages[1]["content"]
+                yield "Registration uses ORCHID-42. [C1]"
+
+        fingerprint = embedding_fingerprint(retriever.services.embedder)
+        snapshot = ServingSnapshotV1(
+            build_id="dense", database=retriever.context.database,
+            corpus_id=retriever.context.corpus_id, chunk_set_id=result.chunk_set_id,
+            corpus_sha256=retriever.context.snapshot_sha256,
+            profile_sha256=profile_digest(profile), vector_collection=collection,
+            embedding_sha256=fingerprint["sha256"],
+        )
+        # An unrelated process-level collection must not affect explicit composition.
+        monkeypatch.setattr(settings, "QDRANT_COLLECTION", "unselected_foreign_collection")
+        kwargs = dict(
+            profile=profile, registry=retriever.registry, llm=Model(),
+            embedder=retriever.services.embedder,
+            vectorstore=retriever.services.dense.store, embedding_identity=fingerprint,
+        )
+        runtime = create_answer_runtime(snapshot, **kwargs)
+
+        async def answer():
+            await runtime.warmup()
+            events = [e async for e in runtime.stream_answer(AnswerRequestV1(question="registration"))]
+            assert events[-1].event == "done"
+            await runtime.shutdown()
+
+        asyncio.run(answer())
+        foreign = QdrantVectorStore(collection_name=collection + "_foreign", url=settings.QDRANT_URL)
+        try:
+            with pytest.raises(ValueError, match="collection binding mismatch"):
+                create_answer_runtime(snapshot, **(kwargs | {"vectorstore": foreign}))
+            with pytest.raises(ValueError, match="Embedding binding mismatch"):
+                create_answer_runtime(
+                    snapshot, **(kwargs | {"embedding_identity": fingerprint | {"sha256": "0" * 64}})
+                )
+        finally:
+            foreign._client.close()
         import sqlite3
 
         with sqlite3.connect(tmp_path / "candidate/corpus.db") as con:

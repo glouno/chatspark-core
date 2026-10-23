@@ -82,6 +82,9 @@ provider values are preserved and validated by the selected settings model.
 
 [Native profiles](docs/NATIVE_PROFILES.md) · [Extension API](docs/EXTENSIONS.md) · [License policy](docs/LICENSE_POLICY.md)
 
+Trusted installed hosts can compose an explicitly scoped runtime through the
+additive [Answer application API v1](docs/APPLICATION_API.md).
+
 The reviewed runtime snapshot is
 [`c0d9fa6d`](https://github.com/glouno/chatspark-core/commit/c0d9fa6d7bd667b2a9b18045147c8574629ef3e7).
 Publication documentation may follow that snapshot without changing the engine.
