@@ -36,7 +36,7 @@ def create_http_app(runtime: AnswerRuntime, *, authorize: Callable[[Request], No
     @app.get("/ready")
     def ready():
         try:
-            return runtime.readiness()
+            return {k: v for k, v in runtime.readiness().items() if k != "database"}
         except Exception:
             raise HTTPException(503, "Serving snapshot unavailable") from None
 

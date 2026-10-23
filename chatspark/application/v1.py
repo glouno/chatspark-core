@@ -240,12 +240,15 @@ class SnapshotAnswerRuntime:
     def _events(self, request, control):
         provider_stream = None
         try:
+            self._verify()
+            yield AnswerEventV1(event="status", data={"phase": "retrieving_evidence"})
+            if control.stopped.is_set():
+                return
             if not self._preparations.acquire(timeout=self._wait):
                 yield AnswerEventV1(event="error", data={"code": "capacity_busy"})
                 return
             try:
                 self._verify()
-                yield AnswerEventV1(event="status", data={"phase": "retrieving_evidence"})
                 if control.stopped.is_set():
                     return
                 messages, sources = prepare_answer(
@@ -259,6 +262,7 @@ class SnapshotAnswerRuntime:
                 event="sources", data={"sources": [s.model_dump() for s in sources]}
             )
             parts = []
+            answer_chars = 0
             provider_stream = self.llm.stream_chat(
                 messages,
                 max_tokens=self.profile.generation.max_tokens,
@@ -269,6 +273,9 @@ class SnapshotAnswerRuntime:
                     return
                 if not isinstance(delta, str):
                     raise ValueError("Generation deltas must be text")
+                answer_chars += len(delta)
+                if len(delta) > 65536 or answer_chars > 262144:
+                    raise ValueError("Generation output exceeds application limits")
                 parts.append(delta)
                 yield AnswerEventV1(event="token", data={"delta": delta})
             if control.stopped.is_set():

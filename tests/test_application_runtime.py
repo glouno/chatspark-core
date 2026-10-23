@@ -82,6 +82,7 @@ def test_explicit_runtime_grounding_http_parity_and_attribution(candidate):
             raise HTTPException(403, "Access denied")
 
     with TestClient(create_http_app(runtime, authorize=authorize)) as client:
+        assert "database" not in client.get("/ready").json()
         assert client.post("/chat", json={"question": "registration"}).status_code == 403
         result = client.post(
             "/chat", json={"question": request.question}, headers={"x-test-token": "test"}
@@ -140,7 +141,7 @@ def test_early_stream_close_releases_provider_and_capacity(candidate):
         assert (await anext(first)).event == "status"
         busy = await collect(runtime, request)
         assert busy[0].data["code"] == "capacity_busy"
-        await first.aclose()  # Close while preparation is pinned.
+        await first.aclose()  # Close before preparation starts.
         second = runtime.stream_answer(request)
         for _ in range(3):
             await anext(second)
@@ -148,6 +149,45 @@ def test_early_stream_close_releases_provider_and_capacity(candidate):
         assert runtime.llm.closed == 1
         assert (await collect(runtime, request))[-1].event == "done"
         assert runtime.llm.closed == 2
+
+    asyncio.run(run())
+
+
+def test_slow_status_consumer_does_not_pin_preparation(candidate):
+    runtime = make_runtime(candidate, max_streams=2, preparation_slots=1)
+
+    async def run():
+        await runtime.warmup()
+        first = runtime.stream_answer(AnswerRequestV1(question="registration"))
+        assert (await anext(first)).event == "status"
+        # Leave the first consumer paused while another request retrieves.
+        events = await collect(runtime, AnswerRequestV1(question="registration"))
+        assert events[-1].event == "done"
+        await first.aclose()
+
+    asyncio.run(run())
+
+
+def test_provider_output_is_bounded_before_accumulation(candidate):
+    runtime = make_runtime(candidate, max_streams=1)
+
+    def overflow(*_args, **_kwargs):
+        try:
+            for _ in range(8):
+                yield "x" * 65536
+        finally:
+            runtime.llm.closed += 1
+
+    runtime.llm.stream_chat = overflow
+
+    async def run():
+        await runtime.warmup()
+        events = await collect(runtime, AnswerRequestV1(question="registration"))
+        assert events[-1].event == "error"
+        assert sum(len(e.data["delta"]) for e in events if e.event == "token") == 262144
+        assert runtime.llm.closed == 1
+        assert runtime._streams.acquire(blocking=False)
+        runtime._streams.release()
 
     asyncio.run(run())
 

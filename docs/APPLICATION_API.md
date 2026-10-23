@@ -64,12 +64,17 @@ Default bounds are four streams, two evidence preparations and a two-second wait
 They are configurable and must be shared by the host's stamp admission policy;
 per-runtime limits alone are not a host memory/capacity envelope. Private query and
 answer caches are absent from this implementation.
+Paused status consumers do not hold evidence-preparation slots. Output is bounded
+to 65,536 characters per delta and 262,144 characters per answer before buffering;
+providers exceeding either limit fail with a bounded error and close their stream.
 
 `chatspark.serve.application.create_http_app(runtime, authorize=...)` adapts this
 interface to `/health`, `/ready`, `/chat` and `/chat/stream`. The host supplies an
 authentication callback. The legacy environment-configured app remains supported
 and uses the same answer preparation/citation validation functions. The explicit
 adapter does not replace the legacy browser/static frontend.
+The explicit HTTP readiness response omits the canonical database filesystem path;
+trusted Python hosts can inspect the full snapshot directly.
 
 Synthetic API tests prove interface, canonical grounding and cleanup behavior.
 Shared hosting still requires real engine/vector/database isolation and capacity
