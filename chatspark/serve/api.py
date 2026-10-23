@@ -1,12 +1,12 @@
 import hashlib
 import hmac
 import json
-import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
+from chatspark.application.v1 import prepare_answer, validate_citations
 from chatspark.generation.client import generate, stream_generate
 from chatspark.generation.prompts import resolve_messages
 from chatspark.profiles import load_profile
@@ -14,7 +14,7 @@ from chatspark.runtime.composition import selected_runtime
 from chatspark.runtime.config import settings
 from chatspark.runtime.factory import get_retriever
 from chatspark.runtime.validation import validate_runtime
-from chatspark.serve.contracts import ChatRequest, ChatResponse, SourceItem
+from chatspark.serve.contracts import ChatRequest, ChatResponse
 
 
 @asynccontextmanager
@@ -47,39 +47,8 @@ def authorized(request):
 def prepare(payload):
     profile = load_profile(settings.CHATSPARK_PROFILE)
     retriever = get_retriever(profile=profile)
-    result = retriever.retrieve_result(
-        payload.question, payload.top_k or profile.retrieval.final_k, payload.filters
-    )
-    from dataclasses import replace
-
-    from chatspark.storage.evidence import narrow_filters
-
-    generation_context = replace(
-        retriever.context, filters=narrow_filters(retriever.context.filters, payload.filters or {})
-    )
-    messages, prompt_metadata = resolve_messages(
-        payload.question, result.items, profile, context=generation_context
-    )
-    sources = [
-        SourceItem(
-            chunk_id=c.chunk_id,
-            doc_id=c.metadata["doc_id"],
-            url=c.metadata["url"],
-            title=c.metadata.get("title") or "Source",
-            heading_path=c.metadata.get("heading_path") or [],
-            retrieval_corpus_id=c.metadata["corpus_id"],
-            selected_corpus_scope="unified",
-        )
-        for c in result.items
-        if c.chunk_id in prompt_metadata["included_evidence_ids"]
-    ]
+    messages, sources = prepare_answer(payload, profile, retriever, resolver=resolve_messages)
     return profile, messages, sources
-
-
-def validate_citations(text, sources):
-    available = {f"C{i}" for i in range(1, len(sources) + 1)}
-    if not set(re.findall(r"\[(C\d+)\]", text)) <= available:
-        raise RuntimeError("Generation returned an unavailable citation")
 
 
 @app.get("/health")

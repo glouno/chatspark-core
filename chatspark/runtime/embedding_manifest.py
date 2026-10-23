@@ -8,8 +8,9 @@ from chatspark.embeddings.formatting import resolve_embedding_text_format
 from chatspark.runtime.config import settings
 
 
-def embedding_fingerprint(embedder):
-    model = Path(settings.EMBEDDING_MODEL)
+def embedding_fingerprint(embedder, *, configuration=None):
+    configuration = settings if configuration is None else configuration
+    model = Path(configuration.EMBEDDING_MODEL)
     artifacts = {}
     if model.is_dir():
         for pattern in ("*.json", "*.safetensors", "*.bin", "*.model", "*.txt"):
@@ -20,14 +21,14 @@ def embedding_fingerprint(embedder):
                             stream, "sha256"
                         ).hexdigest()
     binding = {
-        "backend": settings.EMBEDDING_BACKEND,
-        "model": settings.EMBEDDING_MODEL,
-        "revision": settings.EMBEDDING_REVISION,
+        "backend": configuration.EMBEDDING_BACKEND,
+        "model": configuration.EMBEDDING_MODEL,
+        "revision": configuration.EMBEDDING_REVISION,
         "text_format": resolve_embedding_text_format(
-            settings.EMBEDDING_MODEL, settings.EMBEDDING_TEXT_FORMAT
+            configuration.EMBEDDING_MODEL, configuration.EMBEDDING_TEXT_FORMAT
         ),
-        "normalize": settings.EMBEDDING_NORMALIZE,
-        "document_composition": settings.EMBEDDING_DOCUMENT_COMPOSITION,
+        "normalize": configuration.EMBEDDING_NORMALIZE,
+        "document_composition": configuration.EMBEDDING_DOCUMENT_COMPOSITION,
         "dimensions": getattr(embedder, "dimensions", None),
         "artifacts": artifacts,
     }

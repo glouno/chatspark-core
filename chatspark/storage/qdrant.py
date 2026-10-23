@@ -69,6 +69,11 @@ def _from_qdrant_result_id(raw_id: Any, payload: dict[str, Any]) -> str:
 
 
 class QdrantVectorStore(VectorStore):
+    @property
+    def collection_name(self) -> str:
+        """Authoritative collection binding for application composition."""
+        return self._collection_name
+
     def __init__(
         self,
         collection_name: str | None = None,

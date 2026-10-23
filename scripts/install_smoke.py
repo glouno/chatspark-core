@@ -25,6 +25,7 @@ for module in pkgutil.walk_packages(chatspark.__path__, "chatspark."):
     if module.name in {
         "chatspark.storage.qdrant",
         "chatspark.serve.api",
+        "chatspark.serve.application",
         "chatspark.serve.contracts",
     }:
         continue
@@ -56,5 +57,46 @@ with tempfile.TemporaryDirectory(prefix="core-installed-smoke-") as directory:
     assert json.loads((root / "candidate/runtime-manifest.json").read_text())["distributions"][
         "chatspark-core"
     ]
+    import asyncio
+
+    from chatspark.application import (
+        AnswerRequestV1,
+        ServingSnapshotV1,
+        create_answer_runtime,
+        profile_digest,
+    )
+    from chatspark.retrieval.pipeline import execution_context
+    from chatspark.runtime.registry import get_registry
+
+    profile = load_profile("example")
+    context = execution_context(root / "candidate/corpus.db")
+
+    class Model:
+        def stream_chat(self, messages, *, max_tokens):
+            assert "ORCHID-42" in messages[1]["content"]
+            yield "The registration code is ORCHID-42. [C1]"
+
+    runtime = create_answer_runtime(
+        ServingSnapshotV1(
+            build_id="installed",
+            database=context.database,
+            corpus_id=context.corpus_id,
+            chunk_set_id=context.chunk_set_id,
+            corpus_sha256=context.snapshot_sha256,
+            profile_sha256=profile_digest(profile),
+        ),
+        profile=profile,
+        registry=get_registry(allowed=[]),
+        llm=Model(),
+    )
+
+    async def answer():
+        await runtime.warmup()
+        events = [e async for e in runtime.stream_answer(AnswerRequestV1(question="registration"))]
+        assert events[-1].event == "done"
+        assert events[-1].data["sources"]
+        await runtime.shutdown()
+
+    asyncio.run(answer())
 assert "chatspark_private" not in sys.modules
-print("Installed package resources, migration, build and retrieval passed")
+print("Installed package resources, migration, build, retrieval and application runtime passed")
