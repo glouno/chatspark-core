@@ -8,7 +8,11 @@ from chatspark.prompts import load_prompt
 from chatspark.storage.evidence import EvidenceStore
 
 
-def resolve_messages(question, chunks, profile, *, context=None, registry=None):
+def resolve_messages(
+    question, chunks, profile, *, context=None, registry=None, prompt_bindings=None
+):
+    if prompt_bindings is not None:
+        prompt_bindings.validate_profile(profile)
     if context is not None:
         chunks = EvidenceStore(context.database).resolve(
             [RankedEvidence(c.chunk_id, c.score) for c in chunks], context
@@ -17,12 +21,20 @@ def resolve_messages(question, chunks, profile, *, context=None, registry=None):
     remote_provenance = {}
     system_provider = "local" if policy.system_prompt else "bundled"
     system = (
-        Path(policy.system_prompt).read_text()
+        (
+            prompt_bindings.system.text
+            if prompt_bindings is not None
+            else Path(policy.system_prompt).read_text()
+        )
         if policy.system_prompt
         else load_prompt("rag.classic_chat.system.v6").content
     )
     user = (
-        Path(policy.user_prompt).read_text()
+        (
+            prompt_bindings.user.text
+            if prompt_bindings is not None
+            else Path(policy.user_prompt).read_text()
+        )
         if policy.user_prompt
         else load_prompt("rag.classic_chat.user.v2").content
     )

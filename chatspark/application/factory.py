@@ -4,6 +4,7 @@ from functools import partial
 from typing import Mapping
 
 from chatspark.generation.prompts import resolve_messages
+from chatspark.prompts.bindings import ServingPromptBindingsV1
 from chatspark.retrieval.pipeline import StrategyRetriever, execution_context
 from chatspark.runtime.factory import DenseLane
 from chatspark.storage.evidence import EvidenceStore, narrow_filters
@@ -50,6 +51,7 @@ def create_answer_runtime(
     embedder=None,
     vectorstore=None,
     embedding_identity: Mapping[str, object] | None = None,
+    prompt_bindings: ServingPromptBindingsV1 | None = None,
     **runtime_options,
 ) -> SnapshotAnswerRuntime:
     """Compose installed allowlisted providers for exactly one immutable snapshot.
@@ -58,6 +60,8 @@ def create_answer_runtime(
     attestation. No caller-supplied corpus/collection selector enters this factory.
     Endpoint-dependent embedders must establish dimensions before composition.
     """
+    if prompt_bindings is not None:
+        prompt_bindings.validate_profile(profile)
     context = execution_context(
         snapshot.database,
         narrow_filters({}, authorized_filters or {}),
@@ -90,7 +94,7 @@ def create_answer_runtime(
         profile,
         retriever,
         llm,
-        resolver=partial(resolve_messages, registry=registry),
+        resolver=partial(resolve_messages, registry=registry, prompt_bindings=prompt_bindings),
         index_validator=validator,
         **runtime_options,
     )
