@@ -43,6 +43,18 @@ index record. Runtime warmup and canonical retrieval verify the SQLite identity.
 Mount snapshots and prompt/configuration artifacts read-only; never update them
 in place. Runtime selection and ownership remain the host's responsibilities.
 
+For local prompt overrides, optionally supply `ServingPromptBindingsV1` through
+`create_answer_runtime(..., prompt_bindings=...)`. It carries the original profile
+SHA-256 and optional `PromptAssetV1` system/user values containing the exact frozen
+reference, text and SHA-256 of its UTF-8 text. The engine verifies the profile,
+reference and text digest; it reads the bound text without opening the reference.
+The host must first verify the asset's authorized build ownership and sealed
+artifact integrity. A digest alone does not authorize content. Missing, foreign or
+mismatched bindings fail before prompt I/O. Bundled/remote selection, prompt
+provenance, rendering and the original profile digest retain their behavior.
+Omitting the bindings keeps existing file-based behavior for legacy hosts. This
+contract does not relocate provider configuration assets or grant access to files.
+
 Events retain `status`, `sources`, `token`, `done` and `error` names. Canonical
 citations and source IDs retain the HTTP format. Safe failures never echo provider
 errors or content. Diagnostics receive content-free counts through an explicit
