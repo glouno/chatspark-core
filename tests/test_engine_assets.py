@@ -432,6 +432,15 @@ def test_missing_extra_bindings_and_descriptor_output_roles_fail(tmp_path):
             assets.model_copy(update={"inputs": ()}),
             output_root=request.output_root,
         )
+    extra_reference = assets.inputs[0].reference.model_copy(
+        update={"reference": "/absent-host/foreign.txt"}
+    )
+    extra = assets.inputs[0].model_copy(update={"reference": extra_reference})
+    extra_assets = assets.model_copy(update={"inputs": assets.inputs + (extra,)})
+    with pytest.raises(ValueError, match="exactly match"):
+        AssetBoundRegistry(
+            registry, bundle.load_profile(), extra_assets, output_root=request.output_root
+        )
     registry.providers["synthetic-index"] = replace(
         registry.providers["synthetic-index"], build_output_fields=()
     )
@@ -691,3 +700,17 @@ def test_replaced_open_file_is_rejected_before_read_and_descriptor_closed(tmp_pa
             file_digest(original, sealed=True, expected_size=5)
         with pytest.raises(OSError):
             os.fstat(opened[-1])
+
+
+def test_parent_alias_cannot_redirect_fresh_output_even_inside_attempt(tmp_path):
+    request, bundle, registry, assets, calls = setup_candidate(tmp_path)
+    scoped = AssetBoundRegistry(
+        registry, bundle.load_profile(), assets, output_root=request.output_root
+    )
+    directory = request.output_root / "different-indexes"
+    directory.mkdir(parents=True)
+    (request.output_root / "indexes").symlink_to(directory, target_is_directory=True)
+    with pytest.raises(ValueError, match="canonical path without symlinks"):
+        scoped.resolve(bundle.load_profile().artifact_builders[0], "artifact")
+    assert not calls
+    assert not list(directory.iterdir())
