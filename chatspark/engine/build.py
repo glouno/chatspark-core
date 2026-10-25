@@ -21,6 +21,7 @@ from chatspark.engine.contracts import (
     EngineBuildResultV1,
 )
 from chatspark.engine.profile import EngineProfileBundleV1, load_bundle_file, resolved_artifact
+from chatspark.engine.source_bindings import EngineSourceBindingsV1, load_source_bindings_file
 from chatspark.extraction.files import parse_bytes, read_input
 from chatspark.indexing.v3_indexer import index_v3_database
 from chatspark.ingestion.mirror_files import (
@@ -39,6 +40,7 @@ def execute_build(
     services=None,
     profile_bundle: EngineProfileBundleV1 | None = None,
     provider_assets: EngineBuildAssetsV1 | None = None,
+    source_bindings: EngineSourceBindingsV1 | None = None,
 ) -> EngineBuildResultV1:
     """Build one candidate corpus and return a stable result manifest."""
     from chatspark.engine.services import BuildServices
@@ -58,6 +60,20 @@ def execute_build(
     )
     try:
         _check_deadline(request.deadline_at)
+        if source_bindings is not None:
+            # Revalidate even callers using model_copy/model_construct; retain no
+            # mutable caller state and do not reopen a manifest during extraction.
+            source_bindings = EngineSourceBindingsV1.model_validate_json(
+                source_bindings.model_dump_json()
+            )
+            result.request_sha256 = _json_hash(
+                {
+                    "request": request.model_dump(mode="json"),
+                    "source_bindings_sha256": source_bindings.sha256,
+                }
+            )
+            if services.file_iterator:
+                raise ValueError("Explicit source bindings require the standard source inventory")
         source_root = request.source_root.expanduser().resolve()
         if not source_root.is_dir():
             raise FileNotFoundError(f"source_root is not a directory: {source_root}")
@@ -125,6 +141,20 @@ def execute_build(
         source_hashes = {}
         source_digest = _source_snapshot_digest(source_root, files, file_hashes=source_hashes)
         result.source_snapshot_sha256 = source_digest
+        bound_sources = None
+        if source_bindings is not None:
+            bound_sources = source_bindings.validate_sources(
+                build_id=request.build_id,
+                source_root=source_root,
+                source_hashes=source_hashes,
+                source_digest=source_digest,
+            )
+            canonical_uris = [
+                canonicalize_source_url(binding.source_uri, profile.crawl.canonical_url_rewrites)
+                for binding in bound_sources.values()
+            ]
+            if len(canonical_uris) != len(set(canonical_uris)):
+                raise ValueError("Source bindings collide after canonical URL rewriting")
 
         database = output_root / "corpus.db"
         ingestion_started = perf_counter()
@@ -139,6 +169,8 @@ def execute_build(
             profile=profile,
             services=services,
             registry=registry,
+            source_bindings=bound_sources,
+            source_bindings_sha256=source_bindings.sha256 if source_bindings is not None else None,
         )
         result.corpus_id = corpus_id
         result.ingestion_run_id = ingestion_run_id
@@ -146,6 +178,9 @@ def execute_build(
             status="succeeded",
             duration_ms=_elapsed_ms(ingestion_started),
             counts=ingestion_counts,
+            details={"source_bindings_sha256": source_bindings.sha256}
+            if source_bindings is not None
+            else {},
         )
         chunk_report_path = output_root / "chunk-report.json"
         chunk_started = perf_counter()
@@ -271,6 +306,13 @@ def execute_build(
         current_files = list((services.file_iterator or iter_local_mirror_files)(source_root))
         if _source_snapshot_digest(source_root, current_files) != source_digest:
             raise ValueError("Source snapshot changed during build")
+        if source_bindings is not None:
+            source_bindings.validate_sources(
+                build_id=request.build_id,
+                source_root=source_root,
+                source_hashes=source_hashes,
+                source_digest=source_digest,
+            )
         _validate_artifacts(result.artifacts, output_root)
         _check_deadline(request.deadline_at)
         if resolved_artifact(profile)["profile_digest"] != result.profile_digest:
@@ -293,6 +335,7 @@ def execute_build_file(
     *,
     profile_bundle_path: str | Path | None = None,
     provider_assets_path: str | Path | None = None,
+    source_bindings_path: str | Path | None = None,
 ) -> EngineBuildResultV1:
     """Validate a request file, execute it, and always write the result manifest."""
     request = EngineBuildRequestV1.model_validate_json(
@@ -302,7 +345,10 @@ def execute_build_file(
     assets = load_assets_file(
         provider_assets_path, result_path=result_path, model=EngineBuildAssetsV1
     )
-    result = execute_build(request, profile_bundle=bundle, provider_assets=assets)
+    sources = load_source_bindings_file(source_bindings_path, result_path=result_path)
+    result = execute_build(
+        request, profile_bundle=bundle, provider_assets=assets, source_bindings=sources
+    )
     _write_json(Path(result_path), result.model_dump(mode="json"))
     return result
 
@@ -319,6 +365,8 @@ def _ingest_local_files(
     profile=None,
     services=None,
     registry=None,
+    source_bindings=None,
+    source_bindings_sha256=None,
 ) -> tuple[dict[str, int], str, str]:
     profile = profile or load_profile(request.profile)
     counts = {
@@ -355,7 +403,15 @@ def _ingest_local_files(
             profile_digest=profile_digest,
             source_snapshot=source_digest,
             code_version=(services.version_reader or _engine_version)(),
-            config={"contract_version": 1, "build_id": request.build_id},
+            config={
+                "contract_version": 1,
+                "build_id": request.build_id,
+                **(
+                    {"source_bindings_sha256": source_bindings_sha256}
+                    if source_bindings is not None
+                    else {}
+                ),
+            },
         )
         for path in files:
             _check_deadline(request.deadline_at)
@@ -365,9 +421,17 @@ def _ingest_local_files(
             expected_hash = source_hashes[path.relative_to(source_root).as_posix()]
             if raw_hash != expected_hash:
                 raise ValueError("Source snapshot changed during build")
-            canonical_uri, url_resolution = (services.url_resolver or resolve_local_mirror_url)(
-                source_root, path, request.source_base_url, content_bytes=raw
+            binding = (
+                source_bindings[path.relative_to(source_root).as_posix()]
+                if source_bindings is not None
+                else None
             )
+            if binding is not None:
+                canonical_uri, url_resolution = binding.source_uri, "explicit_source_binding_v1"
+            else:
+                canonical_uri, url_resolution = (services.url_resolver or resolve_local_mirror_url)(
+                    source_root, path, request.source_base_url, content_bytes=raw
+                )
             canonical_uri = canonicalize_source_url(
                 canonical_uri, profile.crawl.canonical_url_rewrites
             )
@@ -419,7 +483,9 @@ def _ingest_local_files(
                 text=parsed.content.text,
                 markdown=parsed.content.markdown,
                 media_type=parsed.mime_type,
-                fetched_at=utc_now(),
+                fetched_at=binding.acquired_at.isoformat()
+                if binding is not None and binding.acquired_at is not None
+                else utc_now(),
                 # A downloaded/exported web file's local mtime is acquisition
                 # metadata, not a source-declared publication/update date.
                 source_modified_at=(
@@ -432,6 +498,11 @@ def _ingest_local_files(
                     "source_kind": "local-files",
                     "relative_path": path.relative_to(source_root).as_posix(),
                     "url_resolution": url_resolution,
+                    **(
+                        {"source_bindings_sha256": source_bindings_sha256}
+                        if binding is not None
+                        else {}
+                    ),
                     "extraction": parsed.diagnostics,
                 },
             )

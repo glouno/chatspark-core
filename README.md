@@ -95,6 +95,9 @@ or proof that an index may be reused as input to another build.
 
 [Native profiles](docs/NATIVE_PROFILES.md) · [Extension API](docs/EXTENSIONS.md) · [License policy](docs/LICENSE_POLICY.md)
 
+[Explicit source bindings](docs/ENGINE_SOURCE_BINDINGS.md) preserve per-file source
+URIs and acquisition times for immutable mixed-source builds.
+
 Trusted installed hosts can compose an explicitly scoped runtime through the
 additive [Answer application API v1](docs/APPLICATION_API.md).
 
