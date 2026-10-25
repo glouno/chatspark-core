@@ -143,3 +143,10 @@ operator-installed language data is supported. Keep the language-data directory
 read-only and never accept `.traineddata` files from document uploads or profiles.
 The exact source pin is in `tesseract-source.json`. These constraints do not make
 native image parsing a complete hostile-input sandbox.
+
+Trusted build/evaluation hosts can supply an additive
+[portable profile and prompt bundle v1](docs/ENGINE_PROFILE_BUNDLE.md) through
+Python or `engine build/evaluate --profile-bundle`. Original profile values and
+digests are retained; explicit prompt text replaces obsolete file reads.
+Provider file references require the subsequent fresh-output binding interface
+and fail closed on this new path until it is available.

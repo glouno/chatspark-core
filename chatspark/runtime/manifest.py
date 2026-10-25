@@ -18,7 +18,10 @@ def runtime_manifest(
     registry=None,
     prompt_metadata=None,
     embedding=None,
+    prompt_bindings=None,
 ):
+    if prompt_bindings is not None:
+        prompt_bindings.validate_profile(profile)
     selected_distribution = selected_distribution or settings.CHATSPARK_RUNTIME_DISTRIBUTION
     registry = registry or get_registry()
     packages = {}
@@ -35,7 +38,14 @@ def runtime_manifest(
         ("user_prompt", "rag.classic_chat.user.v2"),
     ):
         override = getattr(profile.generation, field)
-        body = Path(override).read_bytes() if override else load_prompt(prompt_id).content.encode()
+        bound = getattr(prompt_bindings, field.removesuffix("_prompt"), None)
+        body = (
+            bound.text.encode()
+            if bound is not None
+            else Path(override).read_bytes()
+            if override
+            else load_prompt(prompt_id).content.encode()
+        )
         prompts[field] = hashlib.sha256(body).hexdigest()
     from chatspark.runtime.operator import OperatorConfiguration, operator_digest
 

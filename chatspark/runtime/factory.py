@@ -4,7 +4,6 @@ from functools import lru_cache
 from chatspark.profiles import load_profile
 from chatspark.retrieval.pipeline import StrategyRetriever, execution_context
 from chatspark.runtime.config import settings
-from chatspark.runtime.registry import get_registry
 
 
 def get_embedder():
@@ -83,12 +82,14 @@ class DenseLane:
         ]
 
 
-def get_retriever(*, database=None, profile=None, chunk_set_id=None, filters=None):
+def get_retriever(
+    *, database=None, profile=None, chunk_set_id=None, filters=None, prompt_bindings=None
+):
     profile = load_profile(settings.CHATSPARK_PROFILE) if profile is None else profile
     from chatspark.runtime.validation import validate_runtime
     from chatspark.storage.evidence import narrow_filters
 
-    validate_runtime(profile, require_dense=True)
+    registry = validate_runtime(profile, require_dense=True, prompt_bindings=prompt_bindings)
 
     authorized = json.loads(settings.CHATSPARK_AUTHORIZED_FILTERS)
     if not isinstance(authorized, dict):
@@ -106,7 +107,7 @@ def get_retriever(*, database=None, profile=None, chunk_set_id=None, filters=Non
     return StrategyRetriever(
         context=context,
         profile=profile.retrieval,
-        registry=get_registry(),
+        registry=registry,
         dense=dense,
         embedder=dense.embedder if dense else None,
         policy=profile.policy,

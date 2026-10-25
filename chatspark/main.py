@@ -55,10 +55,17 @@ def configure(runtime: Path | None = typer.Option(None, "--runtime")):
 
 
 @engine.command("build")
-def build(request: Path = typer.Option(...), result: Path = typer.Option(...)):
+def build(
+    request: Path = typer.Option(...),
+    result: Path = typer.Option(...),
+    profile_bundle: Path | None = typer.Option(None),
+):
     from chatspark.engine.build import execute_build_file
 
-    if execute_build_file(request, result).status != "succeeded":
+    if (
+        execute_build_file(request, result, profile_bundle_path=profile_bundle).status
+        != "succeeded"
+    ):
         raise typer.Exit(1)
 
 
@@ -95,10 +102,17 @@ def build_corpus(
 
 
 @engine.command("evaluate")
-def evaluate(request: Path = typer.Option(...), result: Path = typer.Option(...)):
+def evaluate(
+    request: Path = typer.Option(...),
+    result: Path = typer.Option(...),
+    profile_bundle: Path | None = typer.Option(None),
+):
     from chatspark.engine.evaluation import execute_evaluation_file
 
-    if execute_evaluation_file(request, result).status != "succeeded":
+    if (
+        execute_evaluation_file(request, result, profile_bundle_path=profile_bundle).status
+        != "succeeded"
+    ):
         raise typer.Exit(1)
 
 
