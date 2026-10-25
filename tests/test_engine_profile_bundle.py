@@ -285,6 +285,7 @@ def test_separate_profile_bundles_keep_chunking_and_retrieval_settings(tmp_path)
         profile.chunking.settings["target_chunk_size_chars"] = size
         profile.chunking.settings["overlap_chars"] = 10
         profile.retrieval.final_k = limit
+        profile.retrieval.max_chunks_per_doc = 5
         bundle = bundle_for(profile)
         request = request_for(root, "/absent-host/profile.yaml")
         (request.source_root / "workshop.md").write_text(
