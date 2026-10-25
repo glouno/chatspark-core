@@ -135,6 +135,40 @@ def profile_schema():
     print(json.dumps(composed_profile_schema(get_registry()), indent=2))
 
 
+@profiles.command("resolve")
+def resolve_profile(
+    name: str,
+    output: Path = typer.Option(...),
+    references_output: Path | None = typer.Option(None),
+):
+    """Resolve immutable profile values; optionally describe declared file inputs."""
+    from chatspark.profiles import load_profile, profile_digest
+    from chatspark.profiles.references import describe_profile_references
+    from chatspark.runtime.registry import get_registry
+
+    if references_output is not None and (
+        output.resolve() == references_output.resolve()
+        or (output.exists() and references_output.exists() and output.samefile(references_output))
+    ):
+        raise typer.BadParameter("Profile and reference outputs must be distinct")
+    profile = load_profile(name)
+    references = describe_profile_references(profile, get_registry()) if references_output else None
+    output.write_text(
+        json.dumps(
+            {
+                "resolved_profile_version": 2,
+                "profile": profile.model_dump(mode="json"),
+                "profile_digest": profile_digest(profile),
+            },
+            ensure_ascii=False,
+            allow_nan=False,
+        ),
+        encoding="utf-8",
+    )
+    if references is not None:
+        references_output.write_text(references.model_dump_json(), encoding="utf-8")
+
+
 @workspace.command("init")
 def init_workspace(
     path: Path = typer.Option(...), copy_prompts: bool = False, offline: bool = False

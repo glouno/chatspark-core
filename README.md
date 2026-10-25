@@ -80,6 +80,19 @@ Those references, like local prompt files, resolve relative to the profile or
 external section that declares them, including inherited profiles. Other
 provider values are preserved and validated by the selected settings model.
 
+```sh
+chatspark profiles resolve example --output /tmp/profile.json --references-output /tmp/references.json
+```
+
+This emits the existing resolved-profile v2 wrapper and optional
+`ProfileReferenceInventoryV1` metadata from the same profile
+instance. Python hosts can call `describe_profile_references(profile, registry)`
+through `chatspark.profiles`. Metadata preserves references and the profile digest;
+it does not open referenced files or invoke provider factories. Installed validation
+code remains trusted. Hosts separately establish ownership, approved source roots,
+content integrity and fresh-build artifact bindings. Metadata is not authorization
+or proof that an index may be reused as input to another build.
+
 [Native profiles](docs/NATIVE_PROFILES.md) · [Extension API](docs/EXTENSIONS.md) · [License policy](docs/LICENSE_POLICY.md)
 
 Trusted installed hosts can compose an explicitly scoped runtime through the

@@ -5,6 +5,12 @@ from chatspark.profiles.loader import (
     resolved_profile_artifact,
 )
 from chatspark.profiles.models import Profile
+from chatspark.profiles.references import (
+    ProfileReferenceInventoryV1,
+    PromptFileReferenceV1,
+    ProviderFileReferenceV1,
+    describe_profile_references,
+)
 
 __all__ = [
     "Profile",
@@ -12,4 +18,8 @@ __all__ = [
     "load_profile",
     "profile_digest",
     "resolved_profile_artifact",
+    "ProfileReferenceInventoryV1",
+    "PromptFileReferenceV1",
+    "ProviderFileReferenceV1",
+    "describe_profile_references",
 ]
