@@ -60,6 +60,7 @@ def build(
     result: Path = typer.Option(...),
     profile_bundle: Path | None = typer.Option(None),
     provider_assets: Path | None = typer.Option(None),
+    source_bindings: Path | None = typer.Option(None),
 ):
     from chatspark.engine.build import execute_build_file
 
@@ -69,6 +70,7 @@ def build(
             result,
             profile_bundle_path=profile_bundle,
             provider_assets_path=provider_assets,
+            source_bindings_path=source_bindings,
         ).status
         != "succeeded"
     ):
