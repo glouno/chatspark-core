@@ -127,3 +127,22 @@ def test_cli_rejects_alias_output_paths_without_overwriting(tmp_path):
     )
     assert result.exit_code != 0
     assert output.read_text() == "preserved"
+
+
+def test_untrusted_metadata_cannot_exceed_reference_count_or_path_bounds():
+    references = [
+        {
+            "provider": "synthetic.index",
+            "reference_field": "artifact",
+            "reference": f"/unused/{index}",
+        }
+        for index in range(129)
+    ]
+    with pytest.raises(ValidationError):
+        ProfileReferenceInventoryV1.model_validate(
+            {"profile_sha256": "a" * 64, "providers": references}
+        )
+    with pytest.raises(ValidationError):
+        ProfileReferenceInventoryV1.model_validate(
+            {"profile_sha256": "a" * 64, "prompts": [{"role": "system", "reference": "x" * 5000}]}
+        )
