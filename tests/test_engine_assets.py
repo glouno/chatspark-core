@@ -380,7 +380,8 @@ def test_stale_output_cannot_be_candidate_input_or_read_before_build(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "field", ["build_id", "corpus_id", "chunk_set_id", "source_sha256", "database_sha256"]
+    "field",
+    ["build_id", "corpus_id", "chunk_set_id", "source_sha256", "database_sha256", "profile_sha256"],
 )
 def test_foreign_build_association_fails_before_retrieval(tmp_path, field):
     candidate = setup_candidate(tmp_path)
