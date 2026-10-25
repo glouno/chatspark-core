@@ -19,6 +19,7 @@ from chatspark.engine.contracts import (
     EngineBuildRequestV1,
     EngineBuildResultV1,
 )
+from chatspark.engine.profile import EngineProfileBundleV1, load_bundle_file, resolved_artifact
 from chatspark.extraction.files import parse_bytes, read_input
 from chatspark.indexing.v3_indexer import index_v3_database
 from chatspark.ingestion.mirror_files import (
@@ -26,12 +27,17 @@ from chatspark.ingestion.mirror_files import (
     resolve_local_mirror_url,
 )
 from chatspark.ingestion.v3_rechunk import rechunk_v3_database
-from chatspark.profiles.loader import load_profile, resolved_profile_artifact
+from chatspark.profiles.loader import load_profile
 from chatspark.runtime.config import settings
 from chatspark.storage.v3_repository import V3Repository, stable_id, utc_now
 
 
-def execute_build(request: EngineBuildRequestV1, *, services=None) -> EngineBuildResultV1:
+def execute_build(
+    request: EngineBuildRequestV1,
+    *,
+    services=None,
+    profile_bundle: EngineProfileBundleV1 | None = None,
+) -> EngineBuildResultV1:
     """Build one candidate corpus and return a stable result manifest."""
     from chatspark.engine.services import BuildServices
 
@@ -57,11 +63,31 @@ def execute_build(request: EngineBuildRequestV1, *, services=None) -> EngineBuil
             raise FileExistsError(f"output_root must be absent or empty: {output_root}")
         output_root.mkdir(parents=True, exist_ok=True)
 
-        profile_artifact = (services.profile_snapshot or resolved_profile_artifact)(request.profile)
-        profile = (services.profile_reader or load_profile)(request.profile)
         from chatspark.runtime.validation import validate_runtime
 
-        (services.validator or validate_runtime)(profile)
+        if profile_bundle is not None:
+            if services.profile_reader or services.profile_snapshot:
+                raise ValueError("Explicit profile bundle cannot be combined with profile readers")
+            profile = profile_bundle.load_profile()
+            registry = validate_runtime(profile, prompt_bindings=profile_bundle.prompts)
+            profile_bundle.validate_registry(profile, registry)
+            if services.validator:
+                services.validator(profile)
+            profile_artifact = resolved_artifact(profile)
+        else:
+            profile = (services.profile_reader or load_profile)(request.profile)
+            profile_artifact = (
+                services.profile_snapshot(request.profile)
+                if services.profile_snapshot
+                else resolved_artifact(profile)
+            )
+            (services.validator or validate_runtime)(profile)
+        actual_profile_artifact = resolved_artifact(profile)
+        if (
+            profile_artifact["profile_digest"] != actual_profile_artifact["profile_digest"]
+            or profile_artifact["profile"] != actual_profile_artifact["profile"]
+        ):
+            raise ValueError("Build profile snapshot does not match execution profile")
         result.profile_digest = str(profile_artifact["profile_digest"])
         profile_path = output_root / "resolved-profile.json"
         _write_json(
@@ -201,12 +227,15 @@ def execute_build(request: EngineBuildRequestV1, *, services=None) -> EngineBuil
             profile=profile,
             artifacts=result.artifacts,
             embedding=embedding,
+            **({"prompt_bindings": profile_bundle.prompts} if profile_bundle is not None else {}),
         )
         current_files = list((services.file_iterator or iter_local_mirror_files)(source_root))
         if _source_snapshot_digest(source_root, current_files) != source_digest:
             raise ValueError("Source snapshot changed during build")
         _validate_artifacts(result.artifacts, output_root)
         _check_deadline(request.deadline_at)
+        if resolved_artifact(profile)["profile_digest"] != result.profile_digest:
+            raise ValueError("Build profile changed during execution")
         result.status = "succeeded"
     except Exception as exc:
         from chatspark.runtime.errors import safe_error
@@ -216,12 +245,18 @@ def execute_build(request: EngineBuildRequestV1, *, services=None) -> EngineBuil
     return result
 
 
-def execute_build_file(request_path: str | Path, result_path: str | Path) -> EngineBuildResultV1:
+def execute_build_file(
+    request_path: str | Path,
+    result_path: str | Path,
+    *,
+    profile_bundle_path: str | Path | None = None,
+) -> EngineBuildResultV1:
     """Validate a request file, execute it, and always write the result manifest."""
     request = EngineBuildRequestV1.model_validate_json(
         Path(request_path).read_text(encoding="utf-8")
     )
-    result = execute_build(request)
+    bundle = load_bundle_file(profile_bundle_path, result_path=result_path)
+    result = execute_build(request, profile_bundle=bundle)
     _write_json(Path(result_path), result.model_dump(mode="json"))
     return result
 

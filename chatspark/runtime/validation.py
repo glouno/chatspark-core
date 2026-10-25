@@ -15,7 +15,9 @@ def validate_embedding_configuration():
         raise ValueError("Configure EMBEDDING_MODEL for the selected embedding backend")
 
 
-def validate_runtime(profile, *, registry=None, require_dense=False):
+def validate_runtime(profile, *, registry=None, require_dense=False, prompt_bindings=None):
+    if prompt_bindings is not None:
+        prompt_bindings.validate_profile(profile)
     if require_dense and profile.retrieval.enable_dense:
         validate_embedding_configuration()
         from importlib.util import find_spec
@@ -62,7 +64,7 @@ def validate_runtime(profile, *, registry=None, require_dense=False):
         registry.descriptor(selection, capability)
     for name in ("system_prompt", "user_prompt"):
         filename = getattr(profile.generation, name)
-        if filename and not Path(filename).is_file():
+        if prompt_bindings is None and filename and not Path(filename).is_file():
             raise ValueError("Missing explicit prompt override")
     from string import Template
 
@@ -73,9 +75,15 @@ def validate_runtime(profile, *, registry=None, require_dense=False):
         ("user_prompt", "rag.classic_chat.user.v2", {"question", "context"}),
     ):
         override = getattr(profile.generation, field)
-        template = Template(
-            Path(override).read_text() if override else load_prompt(prompt_id).content
+        bound = getattr(prompt_bindings, field.removesuffix("_prompt"), None)
+        text = (
+            bound.text
+            if bound is not None
+            else Path(override).read_text()
+            if override
+            else load_prompt(prompt_id).content
         )
+        template = Template(text)
         if not template.is_valid() or not set(template.get_identifiers()) <= allowed:
             raise ValueError("Malformed prompt template or unsupported variable")
     return registry

@@ -18,6 +18,7 @@ from chatspark.engine.contracts import (
     EvaluationObservationV1,
     EvaluationRankedEvidenceV1,
 )
+from chatspark.engine.profile import EngineProfileBundleV1, load_bundle_file
 from chatspark.retrieval.models import RetrievedChunk
 from chatspark.runtime.factory import get_retriever
 
@@ -25,7 +26,10 @@ _STAGES = ("dense", "sparse", "graph", "fused", "score_adjusted", "reranked", "f
 
 
 def execute_evaluation(
-    request: EngineEvaluationRequestV1, *, retriever_factory=None
+    request: EngineEvaluationRequestV1,
+    *,
+    retriever_factory=None,
+    profile_bundle: EngineProfileBundleV1 | None = None,
 ) -> EngineEvaluationResultV1:
     """Run the configured retrieval pipeline and return content-free evidence rankings."""
     dataset_payload = request.dataset.read_bytes()
@@ -47,13 +51,27 @@ def execute_evaluation(
         ground_truth = _resolve_ground_truth(request.database, build.chunk_set_id, rows)
         from chatspark.profiles import load_profile
 
+        profile = None
+        if profile_bundle is not None:
+            from chatspark.runtime.validation import validate_runtime
+
+            profile = profile_bundle.load_profile()
+            if profile_bundle.profile_sha256 != build.profile_digest:
+                raise ValueError("Evaluation profile does not match selected build")
+            registry = validate_runtime(profile, prompt_bindings=profile_bundle.prompts)
+            profile_bundle.validate_registry(profile, registry)
+            if retriever_factory:
+                raise ValueError(
+                    "Explicit profile bundle cannot be combined with retriever factory"
+                )
         retriever = (
             retriever_factory(request, build)
             if retriever_factory
             else get_retriever(
                 database=request.database,
-                profile=load_profile(request.profile),
+                profile=profile if profile is not None else load_profile(request.profile),
                 chunk_set_id=build.chunk_set_id,
+                prompt_bindings=profile_bundle.prompts if profile_bundle is not None else None,
             )
         )
         observations: list[EvaluationObservationV1] = []
@@ -111,12 +129,16 @@ def execute_evaluation(
 
 
 def execute_evaluation_file(
-    request_path: str | Path, result_path: str | Path
+    request_path: str | Path,
+    result_path: str | Path,
+    *,
+    profile_bundle_path: str | Path | None = None,
 ) -> EngineEvaluationResultV1:
     request = EngineEvaluationRequestV1.model_validate_json(
         Path(request_path).read_text(encoding="utf-8")
     )
-    result = execute_evaluation(request)
+    bundle = load_bundle_file(profile_bundle_path, result_path=result_path)
+    result = execute_evaluation(request, profile_bundle=bundle)
     path = Path(result_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
