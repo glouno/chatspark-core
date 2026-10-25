@@ -44,6 +44,53 @@ class ProfileReferenceInventoryV1(BaseModel):
         return self
 
 
+class ProviderAssetReferenceV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    reference: ProviderFileReferenceV1
+    role: Literal["immutable_input", "build_output", "unclassified"]
+
+
+class ProfileAssetInventoryV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    schema_version: Literal["chatspark.profile-assets.v1"] = "chatspark.profile-assets.v1"
+    profile_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    providers: tuple[ProviderAssetReferenceV1, ...] = Field(default=(), max_length=128)
+    prompts: tuple[PromptFileReferenceV1, ...] = Field(default=(), max_length=2)
+
+    @model_validator(mode="after")
+    def unique_references(self):
+        ProfileReferenceInventoryV1(
+            profile_sha256=self.profile_sha256,
+            providers=tuple(value.reference for value in self.providers),
+            prompts=self.prompts,
+        )
+        return self
+
+
+def describe_profile_assets(profile, registry):
+    """Trusted descriptor roles, not ownership, file content or build freshness."""
+    inventory = describe_profile_references(profile, registry)
+    return ProfileAssetInventoryV1(
+        profile_sha256=inventory.profile_sha256,
+        prompts=inventory.prompts,
+        providers=tuple(
+            ProviderAssetReferenceV1(
+                reference=reference,
+                role=(
+                    "build_output"
+                    if reference.reference_field
+                    in registry.providers[reference.provider].build_output_fields
+                    else "immutable_input"
+                    if reference.reference_field
+                    in registry.providers[reference.provider].immutable_input_fields
+                    else "unclassified"
+                ),
+            )
+            for reference in inventory.providers
+        ),
+    )
+
+
 def describe_profile_references(profile, registry):
     """Inspect approved descriptor settings without reading files or factories.
 

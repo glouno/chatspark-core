@@ -12,6 +12,7 @@ def rechunk_v3_database(
     chunk_set_name="active-v1",
     output=None,
     profile=None,
+    registry=None,
     **kwargs,
 ):
     from chatspark.profiles.models import StructuralSettings
@@ -19,7 +20,7 @@ def rechunk_v3_database(
     if profile:
         from chatspark.runtime.registry import get_registry
 
-        provider = get_registry().resolve(profile.chunking, "chunker")
+        provider = (registry or get_registry()).resolve(profile.chunking, "chunker")
         return provider.rechunk(
             database=database,
             chunk_strategy=chunk_strategy,

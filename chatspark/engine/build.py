@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 
 from chatspark.documents.hashing import compute_content_hash
 from chatspark.documents.urls import canonicalize_source_url
+from chatspark.engine.assets import AssetBoundRegistry, EngineBuildAssetsV1, load_assets_file
 from chatspark.engine.contracts import (
     BuildArtifactV1,
     BuildStageResultV1,
@@ -37,6 +38,7 @@ def execute_build(
     *,
     services=None,
     profile_bundle: EngineProfileBundleV1 | None = None,
+    provider_assets: EngineBuildAssetsV1 | None = None,
 ) -> EngineBuildResultV1:
     """Build one candidate corpus and return a stable result manifest."""
     from chatspark.engine.services import BuildServices
@@ -63,14 +65,32 @@ def execute_build(
             raise FileExistsError(f"output_root must be absent or empty: {output_root}")
         output_root.mkdir(parents=True, exist_ok=True)
 
+        from chatspark.runtime.registry import get_registry
         from chatspark.runtime.validation import validate_runtime
+
+        registry = services.registry or get_registry()
+        if provider_assets is not None and (
+            profile_bundle is None
+            or services.artifacts
+            or services.parser
+            or services.byte_parser
+            or services.chunker
+        ):
+            raise ValueError(
+                "Provider assets require explicit bundle and supported build providers"
+            )
 
         if profile_bundle is not None:
             if services.profile_reader or services.profile_snapshot:
                 raise ValueError("Explicit profile bundle cannot be combined with profile readers")
             profile = profile_bundle.load_profile()
-            registry = validate_runtime(profile, prompt_bindings=profile_bundle.prompts)
-            profile_bundle.validate_registry(profile, registry)
+            if provider_assets is not None:
+                registry = AssetBoundRegistry(
+                    registry, profile, provider_assets, output_root=output_root
+                )
+            else:
+                profile_bundle.validate_registry(profile, registry)
+            validate_runtime(profile, registry=registry, prompt_bindings=profile_bundle.prompts)
             if services.validator:
                 services.validator(profile)
             profile_artifact = resolved_artifact(profile)
@@ -81,7 +101,10 @@ def execute_build(
                 if services.profile_snapshot
                 else resolved_artifact(profile)
             )
-            (services.validator or validate_runtime)(profile)
+            if services.validator:
+                services.validator(profile)
+            else:
+                validate_runtime(profile, registry=registry)
         actual_profile_artifact = resolved_artifact(profile)
         if (
             profile_artifact["profile_digest"] != actual_profile_artifact["profile_digest"]
@@ -115,6 +138,7 @@ def execute_build(
             source_hashes=source_hashes,
             profile=profile,
             services=services,
+            registry=registry,
         )
         result.corpus_id = corpus_id
         result.ingestion_run_id = ingestion_run_id
@@ -131,6 +155,7 @@ def execute_build(
             profile=profile,
             chunk_set_name=request.chunk_set_name,
             output=chunk_report_path,
+            **({"registry": registry} if not services.chunker else {}),
         )
         result.chunk_set_id = str(chunk_report["chunk_set_id"])
         chunk_counts = {
@@ -145,7 +170,6 @@ def execute_build(
         result.artifacts.append(_artifact("chunk_report", chunk_report_path, output_root))
 
         from chatspark.retrieval.pipeline import execution_context
-        from chatspark.runtime.registry import get_registry
 
         if services.artifacts:
             extra_artifacts, extra_stages = services.artifacts(
@@ -156,7 +180,7 @@ def execute_build(
         else:
             for selection in profile.artifact_builders:
                 _check_deadline(request.deadline_at)
-                provider = get_registry().resolve(selection, "artifact")
+                provider = registry.resolve(selection, "artifact")
                 artifact_context = execution_context(database, chunk_set_id=result.chunk_set_id)
                 from dataclasses import replace
 
@@ -165,6 +189,8 @@ def execute_build(
                 _check_deadline(request.deadline_at)
                 artifact = BuildArtifactV1.model_validate(emitted)
                 _validate_artifacts([artifact], output_root)
+                if provider_assets is not None:
+                    registry.capture_output(selection, artifact)
                 result.artifacts.append(artifact)
         if request.dense_index.enabled:
             if request.dense_index.collection_name != settings.QDRANT_COLLECTION:
@@ -208,6 +234,7 @@ def execute_build(
         # Validate the complete composition immediately before declaring success.
         _validate_artifacts(result.artifacts, output_root)
         _check_deadline(request.deadline_at)
+        associations = registry.associations(result) if provider_assets is not None else None
         from chatspark.runtime.manifest import write_runtime_manifest
 
         embedding = None
@@ -228,7 +255,19 @@ def execute_build(
             artifacts=result.artifacts,
             embedding=embedding,
             **({"prompt_bindings": profile_bundle.prompts} if profile_bundle is not None else {}),
+            **({"provider_outputs": associations} if associations is not None else {}),
+            **(
+                {"registry": registry}
+                if provider_assets is not None or services.registry is not None
+                else {}
+            ),
         )
+        if associations is not None:
+            _write_json(
+                output_root / "provider-output-associations.json",
+                associations.model_dump(mode="json"),
+            )
+            (output_root / "provider-output-associations.json").chmod(0o444)
         current_files = list((services.file_iterator or iter_local_mirror_files)(source_root))
         if _source_snapshot_digest(source_root, current_files) != source_digest:
             raise ValueError("Source snapshot changed during build")
@@ -236,6 +275,9 @@ def execute_build(
         _check_deadline(request.deadline_at)
         if resolved_artifact(profile)["profile_digest"] != result.profile_digest:
             raise ValueError("Build profile changed during execution")
+        if provider_assets is not None:
+            if registry.associations(result) != associations:
+                raise ValueError("Provider outputs changed during finalization")
         result.status = "succeeded"
     except Exception as exc:
         from chatspark.runtime.errors import safe_error
@@ -250,13 +292,17 @@ def execute_build_file(
     result_path: str | Path,
     *,
     profile_bundle_path: str | Path | None = None,
+    provider_assets_path: str | Path | None = None,
 ) -> EngineBuildResultV1:
     """Validate a request file, execute it, and always write the result manifest."""
     request = EngineBuildRequestV1.model_validate_json(
         Path(request_path).read_text(encoding="utf-8")
     )
     bundle = load_bundle_file(profile_bundle_path, result_path=result_path)
-    result = execute_build(request, profile_bundle=bundle)
+    assets = load_assets_file(
+        provider_assets_path, result_path=result_path, model=EngineBuildAssetsV1
+    )
+    result = execute_build(request, profile_bundle=bundle, provider_assets=assets)
     _write_json(Path(result_path), result.model_dump(mode="json"))
     return result
 
@@ -272,6 +318,7 @@ def _ingest_local_files(
     source_hashes: dict[str, str],
     profile=None,
     services=None,
+    registry=None,
 ) -> tuple[dict[str, int], str, str]:
     profile = profile or load_profile(request.profile)
     counts = {
@@ -340,6 +387,7 @@ def _ingest_local_files(
                         {
                             "ocr_config": profile.extraction.ocr,
                             "html_config": profile.extraction.html,
+                            "registry": registry,
                         }
                         if not services.byte_parser
                         else {}

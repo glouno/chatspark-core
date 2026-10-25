@@ -33,8 +33,8 @@ also be passed to the answer application API. A result file cannot overwrite its
 bundle input, including via a symlink or hardlink alias.
 
 This is the first slice of portable asset composition. Provider file references
-are rejected on the bundle path until supported auxiliary-input and fresh-build
-output bindings exist. This prevents an old index path from being implicitly
+require the explicit [provider asset/output interface](ENGINE_PROVIDER_ASSETS.md).
+Without those additional bindings, provider references are rejected. This prevents an old index path from being implicitly
 reused to build a new candidate. Legacy artifact-backed deployments continue
 through their existing path. Recovery/restore remains separate from new builds.
 

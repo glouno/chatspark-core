@@ -5,7 +5,7 @@ provider contracts; this boundary preserves existing applications during migrati
 """
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -22,3 +22,4 @@ class BuildServices:
     artifacts: Callable | None = None
     version_reader: Callable | None = None
     manifest_writer: Callable | None = None
+    registry: Any = None

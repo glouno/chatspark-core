@@ -18,7 +18,7 @@ class EngineProfileBundleV1(BaseModel):
     independent validated object on every call. Original references are retained
     as identity; explicit prompt text replaces file reads without rewriting them.
     Hosts separately authorize ownership and retain the input bundle's digest.
-    Provider file bindings are deliberately unsupported in this first interface.
+    Provider file bindings are supplied separately through the asset interface.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

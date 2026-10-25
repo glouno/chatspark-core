@@ -195,6 +195,7 @@ class SnapshotAnswerRuntime:
         diagnostics: Callable[[Mapping[str, object]], None] | None = None,
         resolver=resolve_messages,
         index_validator=None,
+        asset_validator=None,
     ):
         if max_streams < 1 or preparation_slots < 1 or preparation_wait < 0:
             raise ValueError("Invalid capacity configuration")
@@ -204,10 +205,13 @@ class SnapshotAnswerRuntime:
         self._wait, self._diagnostics, self._ready = preparation_wait, diagnostics, False
         self._closed = False
         self._resolver, self._index_validator = resolver, index_validator
+        self._asset_validator = asset_validator
         self._active_lock = Lock()
         self._active = set()
 
     def _verify(self):
+        if self._asset_validator:
+            self._asset_validator()
         s, c = self.snapshot, self.retriever.context
         if (
             self._closed

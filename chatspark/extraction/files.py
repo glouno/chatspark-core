@@ -143,6 +143,7 @@ def parse_bytes(
     pdf_config=None,
     ocr_config=None,
     html_config=None,
+    registry=None,
 ) -> ParsedFile:
     """Parse downloaded bytes while using the source name for format routing."""
     path = local_path or Path(name)
@@ -155,14 +156,14 @@ def parse_bytes(
         from chatspark.plugins.contracts import ProviderSelection
         from chatspark.runtime.registry import get_registry
 
-        extractor = get_registry().resolve(
+        extractor = (registry or get_registry()).resolve(
             html_config or ProviderSelection(provider="html"), "html"
         )
         content = extractor.extract(raw.decode("utf-8", errors="replace"), source_url)
         return ParsedFile(detected, content, resolved_mime)
     if detected == ContentType.PDF:
         started = time.monotonic()
-        outcome = extract_pdf_outcome(raw, pdf_config)
+        outcome = extract_pdf_outcome(raw, pdf_config, registry=registry)
         selective_ocr = (
             ocr_config
             and ocr_config.provider == "tesseract"
@@ -182,6 +183,7 @@ def parse_bytes(
                 timeout_seconds=limits.timeout_seconds - (time.monotonic() - started),
                 native_pages=outcome.pages,
                 inspector=limits.inspector,
+                registry=registry,
             )
             outcome.diagnostics["attempts"] = [
                 *extraction_attempts,
@@ -201,6 +203,7 @@ def parse_bytes(
             max_bytes=limits.max_bytes,
             max_output_bytes=limits.max_output_bytes,
             timeout_seconds=limits.timeout_seconds,
+            registry=registry,
         )
         return ParsedFile(
             detected,

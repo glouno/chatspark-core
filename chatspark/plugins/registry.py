@@ -43,6 +43,10 @@ class ProviderDescriptor:
     # Paths into settings, declared by trusted provider code. Resolve these
     # against the file declaring the selection, before inheritance/merging.
     reference_fields: tuple[str, ...] = ()
+    # Only trusted installed descriptors assign portable input/output roles.
+    # Unclassified legacy references remain supported only on the legacy path.
+    build_output_fields: tuple[str, ...] = ()
+    immutable_input_fields: tuple[str, ...] = ()
 
 
 class Registry:
@@ -63,6 +67,15 @@ class Registry:
             for field in descriptor.reference_fields
         ):
             raise PluginError("Invalid provider reference field")
+        if (
+            len(set(descriptor.reference_fields)) != len(descriptor.reference_fields)
+            or len(set(descriptor.build_output_fields)) != len(descriptor.build_output_fields)
+            or not set(descriptor.build_output_fields) <= set(descriptor.reference_fields)
+            or len(set(descriptor.immutable_input_fields)) != len(descriptor.immutable_input_fields)
+            or not set(descriptor.immutable_input_fields) <= set(descriptor.reference_fields)
+            or set(descriptor.immutable_input_fields) & set(descriptor.build_output_fields)
+        ):
+            raise PluginError("Invalid provider build-output field")
         if external and descriptor.provider_id not in self.allowed:
             raise PluginError("Provider is not allowlisted")
         if descriptor.provider_id in self.providers:

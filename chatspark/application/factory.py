@@ -3,6 +3,12 @@
 from functools import partial
 from typing import Mapping
 
+from chatspark.engine.assets import (
+    AssetBoundRegistry,
+    EngineServingAssetsV1,
+    validate_serving_build,
+)
+from chatspark.engine.contracts import EngineBuildResultV1
 from chatspark.generation.prompts import resolve_messages
 from chatspark.prompts.bindings import ServingPromptBindingsV1
 from chatspark.retrieval.pipeline import StrategyRetriever, execution_context
@@ -52,6 +58,8 @@ def create_answer_runtime(
     vectorstore=None,
     embedding_identity: Mapping[str, object] | None = None,
     prompt_bindings: ServingPromptBindingsV1 | None = None,
+    provider_assets: EngineServingAssetsV1 | None = None,
+    selected_build: EngineBuildResultV1 | None = None,
     **runtime_options,
 ) -> SnapshotAnswerRuntime:
     """Compose installed allowlisted providers for exactly one immutable snapshot.
@@ -62,11 +70,18 @@ def create_answer_runtime(
     """
     if prompt_bindings is not None:
         prompt_bindings.validate_profile(profile)
+    if provider_assets is not None:
+        if selected_build is None:
+            raise ValueError("Provider serving assets require selected build")
+        validate_serving_build(snapshot, selected_build)
+        registry = AssetBoundRegistry(registry, profile, provider_assets, build=selected_build)
     context = execution_context(
         snapshot.database,
         narrow_filters({}, authorized_filters or {}),
         chunk_set_id=snapshot.chunk_set_id,
     )
+    if provider_assets is not None and context.snapshot_sha256 != snapshot.corpus_sha256:
+        raise ValueError("Provider serving assets require matching canonical database")
     validator = None
     dense = None
     if profile.retrieval.enable_dense:
@@ -96,5 +111,6 @@ def create_answer_runtime(
         llm,
         resolver=partial(resolve_messages, registry=registry, prompt_bindings=prompt_bindings),
         index_validator=validator,
+        **({"asset_validator": registry.verify_files} if provider_assets is not None else {}),
         **runtime_options,
     )

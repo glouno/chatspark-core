@@ -19,6 +19,7 @@ def runtime_manifest(
     prompt_metadata=None,
     embedding=None,
     prompt_bindings=None,
+    provider_outputs=None,
 ):
     if prompt_bindings is not None:
         prompt_bindings.validate_profile(profile)
@@ -110,7 +111,7 @@ def runtime_manifest(
                 len(value) != 64 or any(c not in "0123456789abcdef" for c in value)
             ):
                 raise ValueError("Invalid prompt hash")
-    return {
+    result = {
         "runtime_manifest_version": 1,
         "distributions": packages,
         "selected_distribution": selected_distribution,
@@ -124,6 +125,9 @@ def runtime_manifest(
         "prompt_provenance": provenance,
         "artifacts": [a.model_dump(mode="json") for a in artifacts],
     }
+    if provider_outputs is not None:
+        result["provider_outputs"] = provider_outputs.model_dump(mode="json")
+    return result
 
 
 def write_runtime_manifest(destination, **kwargs):

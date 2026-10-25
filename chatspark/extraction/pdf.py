@@ -297,6 +297,8 @@ def _worker(
 def _run_provider(
     payload, selection, registry, capability, *, deadline, max_output_bytes, call_options=None
 ):
+    if hasattr(registry, "prepare_selection"):
+        selection = registry.prepare_selection(selection, capability)
     if (
         not math.isfinite(deadline)
         or not isinstance(max_output_bytes, int)
