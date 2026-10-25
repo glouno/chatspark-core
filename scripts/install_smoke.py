@@ -10,6 +10,7 @@ from pathlib import Path
 import chatspark
 from chatspark.engine.build import execute_build
 from chatspark.engine.contracts import EngineBuildRequestV1
+from chatspark.engine.source_bindings import EngineSourceBindingsV1
 from chatspark.profiles import load_profile
 from chatspark.prompts import load_prompt
 from chatspark.runtime.factory import get_retriever
@@ -57,6 +58,28 @@ with tempfile.TemporaryDirectory(prefix="core-installed-smoke-") as directory:
     assert json.loads((root / "candidate/runtime-manifest.json").read_text())["distributions"][
         "chatspark-core"
     ]
+    bindings = EngineSourceBindingsV1.from_directory(
+        build_id="installed-bound",
+        source_root=source,
+        source_uris={"workshop.md": "https://docs.example/workshop"},
+    )
+    bound = execute_build(
+        EngineBuildRequestV1(
+            build_id="installed-bound",
+            source_root=source,
+            output_root=root / "bound-candidate",
+            profile="example",
+        ),
+        source_bindings=bindings,
+    )
+    assert bound.status == "succeeded", bound.error
+    assert bound.stages["ingestion"].details["source_bindings_sha256"] == bindings.sha256
+    import sqlite3
+
+    with sqlite3.connect(root / "bound-candidate/corpus.db") as connection:
+        assert connection.execute("SELECT canonical_uri FROM documents").fetchall() == [
+            ("https://docs.example/workshop",)
+        ]
     import asyncio
 
     from chatspark.application import (
