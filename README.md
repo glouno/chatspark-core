@@ -148,5 +148,7 @@ Trusted build/evaluation hosts can supply an additive
 [portable profile and prompt bundle v1](docs/ENGINE_PROFILE_BUNDLE.md) through
 Python or `engine build/evaluate --profile-bundle`. Original profile values and
 digests are retained; explicit prompt text replaces obsolete file reads.
-Provider file references require the subsequent fresh-output binding interface
-and fail closed on this new path until it is available.
+Provider file references require the explicit
+[provider asset/output interface](docs/ENGINE_PROVIDER_ASSETS.md), with trusted
+input/output roles and associations to the selected build. They fail closed when
+those bindings are absent.

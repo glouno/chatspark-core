@@ -83,13 +83,21 @@ class DenseLane:
 
 
 def get_retriever(
-    *, database=None, profile=None, chunk_set_id=None, filters=None, prompt_bindings=None
+    *,
+    database=None,
+    profile=None,
+    chunk_set_id=None,
+    filters=None,
+    prompt_bindings=None,
+    registry=None,
 ):
     profile = load_profile(settings.CHATSPARK_PROFILE) if profile is None else profile
     from chatspark.runtime.validation import validate_runtime
     from chatspark.storage.evidence import narrow_filters
 
-    registry = validate_runtime(profile, require_dense=True, prompt_bindings=prompt_bindings)
+    registry = validate_runtime(
+        profile, registry=registry, require_dense=True, prompt_bindings=prompt_bindings
+    )
 
     authorized = json.loads(settings.CHATSPARK_AUTHORIZED_FILTERS)
     if not isinstance(authorized, dict):

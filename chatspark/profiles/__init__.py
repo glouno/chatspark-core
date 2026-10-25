@@ -6,9 +6,12 @@ from chatspark.profiles.loader import (
 )
 from chatspark.profiles.models import Profile
 from chatspark.profiles.references import (
+    ProfileAssetInventoryV1,
     ProfileReferenceInventoryV1,
     PromptFileReferenceV1,
+    ProviderAssetReferenceV1,
     ProviderFileReferenceV1,
+    describe_profile_assets,
     describe_profile_references,
 )
 
@@ -22,4 +25,7 @@ __all__ = [
     "PromptFileReferenceV1",
     "ProviderFileReferenceV1",
     "describe_profile_references",
+    "ProfileAssetInventoryV1",
+    "ProviderAssetReferenceV1",
+    "describe_profile_assets",
 ]

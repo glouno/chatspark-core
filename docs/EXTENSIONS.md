@@ -89,3 +89,9 @@ lookups within one immutable snapshot and authorization scope. Each stage keeps
 its own bounds, scores and independent canonical objects. Final results, context
 expansion and generation still validate their evidence separately; stage batching
 does not allow providers to replace content or widen access.
+
+Portable hosts can classify declared file references with mutually exclusive
+`immutable_input_fields` and `build_output_fields` descriptor tuples. Unclassified
+legacy fields fail closed on the portable path. See the versioned
+[provider asset/output interface](ENGINE_PROVIDER_ASSETS.md) for fresh construction,
+selected-build associations and scoped registry composition.

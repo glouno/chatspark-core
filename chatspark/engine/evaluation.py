@@ -10,6 +10,7 @@ from chatspark.core.evaluation import (
     RetrievalEvalResult,
     retrieval_case_metrics,
 )
+from chatspark.engine.assets import AssetBoundRegistry, EngineServingAssetsV1, load_assets_file
 from chatspark.engine.contracts import (
     EngineBuildResultV1,
     EngineEvaluationRequestV1,
@@ -30,6 +31,8 @@ def execute_evaluation(
     *,
     retriever_factory=None,
     profile_bundle: EngineProfileBundleV1 | None = None,
+    provider_assets: EngineServingAssetsV1 | None = None,
+    registry=None,
 ) -> EngineEvaluationResultV1:
     """Run the configured retrieval pipeline and return content-free evidence rankings."""
     dataset_payload = request.dataset.read_bytes()
@@ -52,14 +55,21 @@ def execute_evaluation(
         from chatspark.profiles import load_profile
 
         profile = None
+        if provider_assets is not None and profile_bundle is None:
+            raise ValueError("Evaluation provider assets require explicit profile bundle")
         if profile_bundle is not None:
+            from chatspark.runtime.registry import get_registry
             from chatspark.runtime.validation import validate_runtime
 
             profile = profile_bundle.load_profile()
             if profile_bundle.profile_sha256 != build.profile_digest:
                 raise ValueError("Evaluation profile does not match selected build")
-            registry = validate_runtime(profile, prompt_bindings=profile_bundle.prompts)
-            profile_bundle.validate_registry(profile, registry)
+            registry = registry or get_registry()
+            if provider_assets is not None:
+                registry = AssetBoundRegistry(registry, profile, provider_assets, build=build)
+            else:
+                profile_bundle.validate_registry(profile, registry)
+            validate_runtime(profile, registry=registry, prompt_bindings=profile_bundle.prompts)
             if retriever_factory:
                 raise ValueError(
                     "Explicit profile bundle cannot be combined with retriever factory"
@@ -72,10 +82,13 @@ def execute_evaluation(
                 profile=profile if profile is not None else load_profile(request.profile),
                 chunk_set_id=build.chunk_set_id,
                 prompt_bindings=profile_bundle.prompts if profile_bundle is not None else None,
+                registry=registry,
             )
         )
         observations: list[EvaluationObservationV1] = []
         for index, row in enumerate(rows, start=1):
+            if provider_assets is not None:
+                registry.verify_files()
             relevant, granularity = ground_truth[index - 1]
             if not relevant:
                 continue
@@ -133,12 +146,16 @@ def execute_evaluation_file(
     result_path: str | Path,
     *,
     profile_bundle_path: str | Path | None = None,
+    provider_assets_path: str | Path | None = None,
 ) -> EngineEvaluationResultV1:
     request = EngineEvaluationRequestV1.model_validate_json(
         Path(request_path).read_text(encoding="utf-8")
     )
     bundle = load_bundle_file(profile_bundle_path, result_path=result_path)
-    result = execute_evaluation(request, profile_bundle=bundle)
+    assets = load_assets_file(
+        provider_assets_path, result_path=result_path, model=EngineServingAssetsV1
+    )
+    result = execute_evaluation(request, profile_bundle=bundle, provider_assets=assets)
     path = Path(result_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")

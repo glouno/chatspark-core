@@ -59,11 +59,17 @@ def build(
     request: Path = typer.Option(...),
     result: Path = typer.Option(...),
     profile_bundle: Path | None = typer.Option(None),
+    provider_assets: Path | None = typer.Option(None),
 ):
     from chatspark.engine.build import execute_build_file
 
     if (
-        execute_build_file(request, result, profile_bundle_path=profile_bundle).status
+        execute_build_file(
+            request,
+            result,
+            profile_bundle_path=profile_bundle,
+            provider_assets_path=provider_assets,
+        ).status
         != "succeeded"
     ):
         raise typer.Exit(1)
@@ -106,11 +112,17 @@ def evaluate(
     request: Path = typer.Option(...),
     result: Path = typer.Option(...),
     profile_bundle: Path | None = typer.Option(None),
+    provider_assets: Path | None = typer.Option(None),
 ):
     from chatspark.engine.evaluation import execute_evaluation_file
 
     if (
-        execute_evaluation_file(request, result, profile_bundle_path=profile_bundle).status
+        execute_evaluation_file(
+            request,
+            result,
+            profile_bundle_path=profile_bundle,
+            provider_assets_path=provider_assets,
+        ).status
         != "succeeded"
     ):
         raise typer.Exit(1)
@@ -154,10 +166,11 @@ def resolve_profile(
     name: str,
     output: Path = typer.Option(...),
     references_output: Path | None = typer.Option(None),
+    assets_output: Path | None = typer.Option(None),
 ):
     """Resolve immutable profile values; optionally describe declared file inputs."""
     from chatspark.profiles import load_profile, profile_digest
-    from chatspark.profiles.references import describe_profile_references
+    from chatspark.profiles.references import describe_profile_assets, describe_profile_references
     from chatspark.runtime.registry import get_registry
 
     if references_output is not None and (
@@ -165,8 +178,19 @@ def resolve_profile(
         or (output.exists() and references_output.exists() and output.samefile(references_output))
     ):
         raise typer.BadParameter("Profile and reference outputs must be distinct")
+    if assets_output is not None:
+        for other in (output, references_output):
+            if other is not None and (
+                other.resolve() == assets_output.resolve()
+                or (other.exists() and assets_output.exists() and other.samefile(assets_output))
+            ):
+                raise typer.BadParameter("Profile asset output must be distinct")
     profile = load_profile(name)
-    references = describe_profile_references(profile, get_registry()) if references_output else None
+    registry = (
+        get_registry() if references_output is not None or assets_output is not None else None
+    )
+    references = describe_profile_references(profile, registry) if references_output else None
+    assets = describe_profile_assets(profile, registry) if assets_output else None
     output.write_text(
         json.dumps(
             {
@@ -181,6 +205,8 @@ def resolve_profile(
     )
     if references is not None:
         references_output.write_text(references.model_dump_json(), encoding="utf-8")
+    if assets is not None:
+        assets_output.write_text(assets.model_dump_json(), encoding="utf-8")
 
 
 @workspace.command("init")
