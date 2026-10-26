@@ -83,6 +83,7 @@ with tempfile.TemporaryDirectory(prefix="core-installed-smoke-") as directory:
     import asyncio
 
     from chatspark.application import (
+        AnswerCapacityV1,
         AnswerRequestV1,
         ServingSnapshotV1,
         create_answer_runtime,
@@ -111,14 +112,40 @@ with tempfile.TemporaryDirectory(prefix="core-installed-smoke-") as directory:
         profile=profile,
         registry=get_registry(allowed=[]),
         llm=Model(),
+        capacity=(capacity := AnswerCapacityV1(max_streams=1)),
+    )
+
+    other = execution_context(root / "bound-candidate/corpus.db")
+    second = create_answer_runtime(
+        ServingSnapshotV1(
+            build_id="installed-bound",
+            database=other.database,
+            corpus_id=other.corpus_id,
+            chunk_set_id=other.chunk_set_id,
+            corpus_sha256=other.snapshot_sha256,
+            profile_sha256=profile_digest(profile),
+        ),
+        profile=profile,
+        registry=get_registry(allowed=[]),
+        llm=Model(),
+        capacity=capacity,
     )
 
     async def answer():
         await runtime.warmup()
+        await second.warmup()
+        first_stream = runtime.stream_answer(AnswerRequestV1(question="registration"))
+        await anext(first_stream)
+        busy = [e async for e in second.stream_answer(AnswerRequestV1(question="registration"))]
+        assert busy[-1].data == {"code": "capacity_busy"}
+        await first_stream.aclose()
         events = [e async for e in runtime.stream_answer(AnswerRequestV1(question="registration"))]
         assert events[-1].event == "done"
         assert events[-1].data["sources"]
         await runtime.shutdown()
+        sibling = [e async for e in second.stream_answer(AnswerRequestV1(question="registration"))]
+        assert sibling[-1].event == "done"
+        await second.shutdown()
 
     asyncio.run(answer())
 assert "chatspark_private" not in sys.modules

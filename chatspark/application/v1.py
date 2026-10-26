@@ -9,7 +9,7 @@ from contextlib import suppress
 from contextvars import copy_context
 from dataclasses import replace
 from pathlib import Path
-from threading import BoundedSemaphore, Event, Lock
+from threading import Event, Lock
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -18,6 +18,8 @@ from chatspark.generation.prompts import resolve_messages
 from chatspark.profiles.loader import profile_digest
 from chatspark.serve.contracts import SourceItem
 from chatspark.storage.evidence import narrow_filters, snapshot_digest
+
+from .capacity import AnswerCapacityV1
 
 
 class StrictModel(BaseModel):
@@ -192,17 +194,23 @@ class SnapshotAnswerRuntime:
         max_streams=4,
         preparation_slots=2,
         preparation_wait=2.0,
+        capacity: AnswerCapacityV1 | None = None,
         diagnostics: Callable[[Mapping[str, object]], None] | None = None,
         resolver=resolve_messages,
         index_validator=None,
         asset_validator=None,
     ):
-        if max_streams < 1 or preparation_slots < 1 or preparation_wait < 0:
-            raise ValueError("Invalid capacity configuration")
+        if capacity is not None and (
+            not isinstance(capacity, AnswerCapacityV1)
+            or (max_streams, preparation_slots, preparation_wait) != (4, 2, 2.0)
+        ):
+            raise ValueError("Configure explicit shared capacity on its owner")
+        self.capacity = capacity or AnswerCapacityV1(
+            max_streams, preparation_slots, preparation_wait
+        )
         self.snapshot, self.profile, self.retriever, self.llm = snapshot, profile, retriever, llm
-        self._streams = BoundedSemaphore(max_streams)
-        self._preparations = BoundedSemaphore(preparation_slots)
-        self._wait, self._diagnostics, self._ready = preparation_wait, diagnostics, False
+        self._streams, self._preparations = self.capacity._streams, self.capacity._preparations
+        self._diagnostics, self._ready = diagnostics, False
         self._closed = False
         self._resolver, self._index_validator = resolver, index_validator
         self._asset_validator = asset_validator
@@ -248,8 +256,9 @@ class SnapshotAnswerRuntime:
             yield AnswerEventV1(event="status", data={"phase": "retrieving_evidence"})
             if control.stopped.is_set():
                 return
-            if not self._preparations.acquire(timeout=self._wait):
-                yield AnswerEventV1(event="error", data={"code": "capacity_busy"})
+            if not self.capacity.acquire_preparation(control.stopped):
+                if not control.stopped.is_set():
+                    yield AnswerEventV1(event="error", data={"code": "capacity_busy"})
                 return
             try:
                 self._verify()
@@ -259,7 +268,7 @@ class SnapshotAnswerRuntime:
                     request, self.profile, self.retriever, resolver=self._resolver
                 )
             finally:
-                self._preparations.release()
+                self.capacity.release_preparation()
             if control.stopped.is_set():
                 return
             yield AnswerEventV1(
@@ -314,13 +323,13 @@ class SnapshotAnswerRuntime:
     async def stream_answer(self, request):
         self.readiness()
         request = AnswerRequestV1.model_validate(request.model_dump())
-        if not self._streams.acquire(blocking=False):
+        if not self.capacity.acquire_stream():
             yield AnswerEventV1(event="error", data={"code": "capacity_busy"})
             return
         control = _StreamControl()
         with self._active_lock:
             if self._closed:
-                self._streams.release()
+                self.capacity.release_stream()
                 raise RuntimeError("Serving snapshot unavailable")
             self._active.add(control)
         stream = _thread_stream(self._events(request, control), control)
@@ -333,7 +342,7 @@ class SnapshotAnswerRuntime:
             finally:
                 with self._active_lock:
                     self._active.discard(control)
-                self._streams.release()
+                self.capacity.release_stream()
 
     async def shutdown(self):
         with self._active_lock:
