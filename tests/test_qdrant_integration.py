@@ -107,7 +107,7 @@ def test_candidate_dense_index_and_canonical_filtering(tmp_path, monkeypatch):
                     **(kwargs | {"embedding_identity": fingerprint | {"sha256": "0" * 64}}),
                 )
         finally:
-            foreign._client.close()
+            foreign.close()
         import sqlite3
 
         with sqlite3.connect(tmp_path / "candidate/corpus.db") as con:
