@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Iterable
+from contextlib import suppress
+from functools import wraps
 from importlib import import_module
+from threading import RLock
 from typing import Any
 
 from chatspark.storage.vector_store import VectorStore, VectorStoreItem, VectorStoreResult
@@ -68,6 +71,22 @@ def _from_qdrant_result_id(raw_id: Any, payload: dict[str, Any]) -> str:
     return str(raw_id)
 
 
+def _owned_operation(method):
+    @wraps(method)
+    def operation(self, *args, **kwargs):
+        with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("Qdrant vector store is closed")
+            self._active_operations += 1
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            with self._lifecycle_lock:
+                self._active_operations -= 1
+
+    return operation
+
+
 class QdrantVectorStore(VectorStore):
     @property
     def collection_name(self) -> str:
@@ -83,6 +102,10 @@ class QdrantVectorStore(VectorStore):
         timeout: int | None = None,
         create_payload_indexes: bool | None = None,
     ):
+        self._lifecycle_lock = RLock()
+        self._active_operations = 0
+        self._closed = False
+        self._client_closed = False
         self._collection_name = collection_name or os.getenv(
             "QDRANT_COLLECTION", "chatspark_chunks"
         )
@@ -97,7 +120,29 @@ class QdrantVectorStore(VectorStore):
             else _env_bool("QDRANT_CREATE_PAYLOAD_INDEXES", True)
         )
         self._payload_indexes_ensured = False
-        self._vector_size: int | None = self._discover_vector_size()
+        try:
+            self._vector_size: int | None = self._discover_vector_size()
+        except BaseException:
+            # A failed constructor never transfers ownership to its caller.
+            # Preserve the original failure even if transport disposal fails.
+            with suppress(Exception):
+                self.close()
+            raise
+
+    def close(self) -> None:
+        """Dispose this client's connections after its runtime has drained.
+
+        Active operations reject closure without changing state. Successful
+        closure is idempotent; a failed disposal can be retried, but operations
+        remain disabled. This never deletes or mutates the bound collection.
+        """
+        with self._lifecycle_lock:
+            if self._active_operations:
+                raise RuntimeError("Drain Qdrant operations before closing the vector store")
+            self._closed = True
+            if not self._client_closed:
+                self._client.close()
+                self._client_closed = True
 
     def _collection_exists(self) -> bool:
         try:
@@ -181,6 +226,7 @@ class QdrantVectorStore(VectorStore):
             return next(iter(raw_vector.values()), None)
         return raw_vector
 
+    @_owned_operation
     def upsert(self, items: Iterable[VectorStoreItem]) -> None:
         points = list(items)
         if not points:
@@ -204,6 +250,7 @@ class QdrantVectorStore(VectorStore):
             wait=True,
         )
 
+    @_owned_operation
     def query(
         self,
         embedding: list[float],
@@ -247,6 +294,7 @@ class QdrantVectorStore(VectorStore):
             )
         return results
 
+    @_owned_operation
     def get(self, item_ids: list[str]) -> list[VectorStoreResult]:
         if not item_ids or self._collection_missing():
             return []
@@ -272,6 +320,7 @@ class QdrantVectorStore(VectorStore):
             )
         return out
 
+    @_owned_operation
     def delete(self, item_ids: list[str]) -> None:
         if not item_ids or self._collection_missing():
             return
@@ -282,11 +331,13 @@ class QdrantVectorStore(VectorStore):
             wait=True,
         )
 
+    @_owned_operation
     def count(self) -> int:
         if self._collection_missing():
             return 0
         return int(self._client.count(collection_name=self._collection_name, exact=True).count)
 
+    @_owned_operation
     def list_ids(self, filters: dict[str, Any] | None = None) -> list[str]:
         """Return logical item IDs, optionally restricted by indexed payload."""
         if self._collection_missing():
@@ -308,6 +359,7 @@ class QdrantVectorStore(VectorStore):
                 break
         return sorted(set(out))
 
+    @_owned_operation
     def reset(self) -> None:
         if not self._collection_missing():
             self._client.delete_collection(collection_name=self._collection_name)

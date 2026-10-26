@@ -103,3 +103,14 @@ trusted Python hosts can inspect the full snapshot directly.
 Synthetic API tests prove interface, canonical grounding and cleanup behavior.
 Shared hosting still requires real engine/vector/database isolation and capacity
 campaigns in the consuming deployment.
+
+### Owned vector-client cleanup
+
+`QdrantVectorStore.close()` releases only its owned client's connections; it
+does not delete the collection. Drain runtime streams before releasing the host's
+vector binding. Active vector operations reject closure and keep the store open.
+Successful closure is idempotent and all later operations (including empty
+queries/writes) fail rather than reopening a connection. Failed disposal disables
+operations but permits another `close()` attempt. Failed construction closes the
+client before propagating its original discovery error. Runtime shutdown itself
+does not dispose injected dependencies: their shared/scoped owner does.
