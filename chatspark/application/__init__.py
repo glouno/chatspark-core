@@ -2,6 +2,7 @@
 
 from chatspark.prompts.bindings import PromptAssetV1, ServingPromptBindingsV1
 
+from .capacity import AnswerCapacityV1
 from .factory import create_answer_runtime
 from .v1 import (
     AnswerEventV1,
@@ -14,6 +15,7 @@ from .v1 import (
 )
 
 __all__ = [
+    "AnswerCapacityV1",
     "PromptAssetV1",
     "ServingPromptBindingsV1",
     "AnswerEventV1",

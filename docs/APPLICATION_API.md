@@ -1,5 +1,17 @@
 # Answer application API v1
 
+Hosts may pass the same `AnswerCapacityV1(max_streams=4, preparation_slots=2,
+preparation_wait=2.0)` as `capacity=` to independently configured answer runtimes.
+The immutable configuration owns shared admission gates, with FIFO preparation
+waiting bounded by the deadline and responsive cancellation. It holds no corpus,
+model, prompt, authorization or request content. Each runtime still verifies its
+own snapshot and uses its own retrieval profile and prompts.
+
+Without `capacity=`, existing arguments construct a runtime-local owner. With an
+explicit owner, configure limits there; conflicting legacy arguments are rejected.
+Runtime shutdown cancels only its own requests and never closes shared capacity.
+Hosts still own model-memory limits, authorization and measured load fairness.
+
 `chatspark.application` is an additive supported Python interface for trusted
 installed hosts. Engine build/evaluation, CLI and existing HTTP v1 schemas are
 unchanged. Install the `serve` extra only when using the optional HTTP adapter.
