@@ -1,6 +1,7 @@
 name: Core quality
 on:
   push:
+    branches-ignore: [beta]
   pull_request:
   workflow_dispatch:
 permissions:
