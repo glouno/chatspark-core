@@ -79,7 +79,7 @@ def chat(payload: ChatRequest, request: Request):
     try:
         profile, messages, sources = prepare(payload)
         text = generate(messages, max_tokens=profile.generation.max_tokens)
-        validate_citations(text, sources)
+        sources = validate_citations(text, sources)
         return ChatResponse(answer=text, sources=sources)
     except Exception:
         raise HTTPException(502, "Chat request failed") from None
@@ -104,7 +104,7 @@ def stream(payload: ChatRequest, request: Request):
                 parts.append(delta)
                 yield event("token", {"delta": delta})
             text = "".join(parts)
-            validate_citations(text, sources)
+            source_data = [s.model_dump() for s in validate_citations(text, sources)]
             yield event("done", {"answer": text, "sources": source_data, "corpus_scope": "unified"})
         except Exception:
             yield event("error", {"message": "Chat request failed"})

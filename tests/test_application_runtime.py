@@ -15,10 +15,12 @@ from chatspark.application import (
     prepare_answer,
     profile_digest,
 )
+from chatspark.application.v1 import validate_citations
 from chatspark.profiles import load_profile
 from chatspark.retrieval.pipeline import execution_context
 from chatspark.runtime.registry import get_registry
 from chatspark.serve.application import create_http_app
+from chatspark.serve.contracts import SourceItem
 
 attribution = ContextVar("test_attribution", default=None)
 
@@ -27,12 +29,12 @@ class Model:
     def __init__(self):
         self.inputs = []
         self.closed = 0
+        self.deltas = ("The registration code is ", "ORCHID-42. [C1]")
 
     def stream_chat(self, messages, *, max_tokens):
         self.inputs.append((messages, attribution.get(), max_tokens))
         try:
-            yield "The registration code is "
-            yield "ORCHID-42. [C1]"
+            yield from self.deltas
         finally:
             self.closed += 1
 
@@ -55,6 +57,61 @@ def make_runtime(candidate, **options):
 
 async def collect(runtime, request):
     return [e async for e in runtime.stream_answer(request)]
+
+
+@pytest.mark.parametrize("text", ["No relevant evidence.", "", "Referenced [C2] twice [C2]. [C1]"])
+def test_completed_citation_table_preserves_labels(text):
+    sources = [
+        SourceItem(chunk_id=str(i), url=f"https://docs.example/{i}", title=str(i), heading_path=[])
+        for i in (1, 2)
+    ]
+    result = validate_citations(text, sources)
+    assert result == (sources if "[C" in text else [])
+    assert [s.chunk_id for s in sources] == ["1", "2"]
+
+
+@pytest.mark.parametrize("text", ["Only the second source [C2].", "Only the first [C1]."])
+def test_partially_cited_table_never_compacts_streamed_labels(text):
+    sources = [
+        SourceItem(chunk_id=str(i), url=f"https://docs.example/{i}", title=str(i), heading_path=[])
+        for i in (1, 2, 3)
+    ]
+    assert validate_citations(text, sources) is sources
+
+
+@pytest.mark.parametrize("marker", ["[C0]", "[C01]", "[C3]"])
+def test_unavailable_citation_cannot_become_an_abstention(marker):
+    sources = [
+        SourceItem(chunk_id=str(i), url=f"https://docs.example/{i}", title=str(i), heading_path=[])
+        for i in (1, 2)
+    ]
+    with pytest.raises(ValueError, match="Unavailable citation"):
+        validate_citations(marker, sources)
+
+
+def test_uncited_answer_clears_completed_sources_with_http_parity(candidate):
+    runtime = make_runtime(candidate)
+    runtime.llm.deltas = ("The excerpts do not provide ", "a satellite launch date.")
+    request = AnswerRequestV1(question="What is the satellite launch date?")
+
+    async def run():
+        await runtime.warmup()
+        return await collect(runtime, request)
+
+    events = asyncio.run(run())
+    assert [e.event for e in events] == ["status", "sources", "token", "token", "done"]
+    assert events[1].data["sources"]  # Retrieval supplied unrelated context to the model.
+    assert events[-1].data["sources"] == []
+    assert events[-1].data["answer"] == "".join(runtime.llm.deltas)
+    assert runtime.llm.closed == 1
+    with TestClient(create_http_app(runtime, authorize=lambda request: None)) as client:
+        result = client.post("/chat", json={"question": request.question})
+        assert result.status_code == 200
+        assert result.json() == {k: events[-1].data[k] for k in ("answer", "sources")}
+        stream = client.post("/chat/stream", json={"question": request.question})
+        done = [p for p in stream.text.split("\n\n") if p.startswith("event: done")][0]
+        assert json.loads(done.split("data: ")[1])["sources"] == []
+    assert runtime.llm.closed == 3
 
 
 def test_explicit_runtime_grounding_http_parity_and_attribution(candidate):

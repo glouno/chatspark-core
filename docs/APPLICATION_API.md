@@ -73,6 +73,13 @@ errors or content. Diagnostics receive content-free counts through an explicit
 callback; this API does not enable prompt/answer capture. Private implementations
 must apply their own existing capture policy through scoped callbacks.
 
+The early `sources` event contains retrieved context, before generation finishes.
+The completed `done.sources` is empty when the answer cites no evidence, including
+an unsupported-question abstention. Hosts must use this completed value for answer
+references. When evidence is cited, the original source array positions remain the
+`[C1]`, `[C2]`, … label table; unused positions are retained to preserve streamed
+markers. Unavailable citation markers fail rather than linking to another source.
+
 Models implement `stream_chat(messages, max_tokens=...)`. Each returned iterator
 owns `close()` and may expose `get_metadata()` for request-local usage and gateway
 attempt identity. Mutable "last call" metadata on a shared model is never read.

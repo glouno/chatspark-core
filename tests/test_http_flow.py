@@ -2,13 +2,21 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import pytest
 from fastapi.testclient import TestClient
 
 from chatspark.runtime.config import settings
 from chatspark.serve.api import app
 
 
-def test_real_mock_endpoint_grounded_answer_and_stream(candidate, monkeypatch, caplog):
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The registration code is ORCHID-42. [C1]",
+        "The excerpts do not provide a satellite launch date.",
+    ],
+)
+def test_real_mock_endpoint_grounded_answer_and_stream(candidate, monkeypatch, caplog, text):
     database, _ = candidate
 
     class Handler(BaseHTTPRequestHandler):
@@ -23,9 +31,8 @@ def test_real_mock_endpoint_grounded_answer_and_stream(candidate, monkeypatch, c
                 "Content-Type", "text/event-stream" if data["stream"] else "application/json"
             )
             self.end_headers()
-            text = "The registration code is ORCHID-42. [C1]"
             if data["stream"]:
-                for delta in ("The registration code is ", "ORCHID-42. [C1]"):
+                for delta in (text[:20], text[20:]):
                     self.wfile.write(
                         (
                             "data: "
@@ -52,10 +59,18 @@ def test_real_mock_endpoint_grounded_answer_and_stream(candidate, monkeypatch, c
                 json={"question": "registration code", "filters": {}, "corpus_scope": "unified"},
             )
             assert response.status_code == 200, response.text
-            assert response.json()["sources"][0]["chunk_id"]
+            assert response.json()["answer"] == text
+            if "[C1]" in text:
+                assert response.json()["sources"][0]["chunk_id"]
+            else:
+                assert response.json()["sources"] == []
             stream = client.post("/chat/stream", json={"question": "registration code"})
             assert "event: token" in stream.text and "event: done" in stream.text
             assert "event: error" not in stream.text
+            done = [p for p in stream.text.split("\n\n") if p.startswith("event: done")][0]
+            final = json.loads(done.split("data: ")[1])
+            assert final["answer"] == text
+            assert final["sources"] == response.json()["sources"]
         assert "ORCHID-42" not in caplog.text
     finally:
         server.shutdown()

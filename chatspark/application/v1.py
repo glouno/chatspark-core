@@ -133,9 +133,14 @@ def prepare_answer(payload, profile, retriever, *, resolver=resolve_messages):
 
 
 def validate_citations(text, sources):
+    """Return the completed answer's label table, empty when no evidence is cited."""
     available = {f"C{i}" for i in range(1, len(sources) + 1)}
-    if not set(re.findall(r"\[(C\d+)\]", text)) <= available:
+    cited = set(re.findall(r"\[(C\d+)\]", text))
+    if not cited <= available:
         raise ValueError("Unavailable citation")
+    # Array positions define C1, C2, ... for streamed text. Compacting a partially
+    # cited table would silently attach its existing markers to different sources.
+    return sources if cited else []
 
 
 class _StreamControl:
@@ -294,7 +299,7 @@ class SnapshotAnswerRuntime:
             if control.stopped.is_set():
                 return
             answer = "".join(parts)
-            validate_citations(answer, sources)
+            sources = validate_citations(answer, sources)
             metadata = getattr(provider_stream, "get_metadata", lambda: {})()
             if self._diagnostics:
                 self._diagnostics({"sources": len(sources), "answer_chars": len(answer)})
