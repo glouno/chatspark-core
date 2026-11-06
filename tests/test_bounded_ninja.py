@@ -23,16 +23,51 @@ BOUNDED = runpy.run_path(str(SCRIPT))["bounded_arguments"]
         (["-j1", "-j8"], ["-j", "2"]),
         (["-t", "commands"], ["-j", "2", "-t", "commands"]),
         (["--", "-j8"], ["-j", "2", "--", "-j8"]),
+        (["-vj8"], ["-j", "2", "-v"]),
+        (["-nvj0"], ["-j", "2", "-n", "-v"]),
+        (["-vj1", "-vj8", "-vj0"], ["-j", "2", "-v", "-v", "-v"]),
+        (["-vj8", "-j1"], ["-j", "1", "-v"]),
+        (["-vvj", "8"], ["-j", "2", "-v", "-v"]),
+        (["-C", "-j8"], ["-j", "2", "-C", "-j8"]),
+        (["-vC-j8", "-f-j0"], ["-j", "2", "-v", "-C", "-j8", "-f", "-j0"]),
+        (
+            ["-k", "-j8", "-l0", "-dlist", "-w", "dupbuild=err"],
+            ["-j", "2", "-k", "-j8", "-l", "0", "-d", "list", "-w", "dupbuild=err"],
+        ),
+        (["target", "-vj8"], ["-j", "2", "target", "-v"]),
+        (
+            ["-vtcommands", "-j8", "--", "target"],
+            ["-j", "2", "-v", "-t", "commands", "-j8", "--", "target"],
+        ),
+        (["--version", "-jinvalid"], ["-j", "2", "--version", "-jinvalid"]),
+        (["-vhwhatever", "-j8"], ["-j", "2", "-v", "-hwhatever", "-j8"]),
+        (["-j", " +1"], ["-j", "1"]),
+        (["-j", ""], ["-j", "2"]),
+        (["-j0000000000002"], ["-j", "2"]),
     ],
 )
 def test_job_limit_and_preserved_arguments(arguments, expected):
     assert BOUNDED(arguments) == expected
 
 
-@pytest.mark.parametrize("arguments", [["-j"], ["-j-1"], ["-j", "invalid"]])
+@pytest.mark.parametrize(
+    "arguments", [["-j"], ["-j-1"], ["-j", "invalid"], ["-vj8v"], ["-j\u0662"]]
+)
 def test_invalid_job_options_fail_closed(arguments):
     with pytest.raises(ValueError, match="nonnegative integer"):
         BOUNDED(arguments)
+
+
+@pytest.mark.parametrize("arguments", [["--jobs=8"], ["--ver"], ["-xj8"], ["-C"], ["-j4294967296"]])
+def test_unsupported_or_overflow_arguments_fail_before_exec(arguments):
+    with pytest.raises(ValueError):
+        BOUNDED(arguments)
+
+
+@pytest.mark.parametrize("target", ["target", "-"])
+def test_posix_target_stops_option_parsing(monkeypatch, target):
+    monkeypatch.setenv("POSIXLY_CORRECT", "")
+    assert BOUNDED([target, "-vj8"]) == ["-j", "2", target, "-vj8"]
 
 
 @pytest.mark.parametrize("termination", [23, -signal.SIGTERM])
