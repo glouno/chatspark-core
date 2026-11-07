@@ -331,7 +331,13 @@ def _run_provider(
             remaining = max(0, deadline - time.monotonic())
             if not wait([process.sentinel], timeout=remaining):
                 return "timeout", None
-            process.join(timeout=0)
+            # Pipe EOF can precede a waitable child, so an unset exit code is
+            # still pending. Keep waitpid nonblocking within the extraction deadline.
+            while process.exitcode is None:
+                remaining = max(0, deadline - time.monotonic())
+                if not remaining:
+                    return "timeout", None
+                time.sleep(min(0.01, remaining))
             if process.exitcode != 0 or not result.is_file():
                 return "failed", None
             if result.stat().st_size > max_output_bytes:

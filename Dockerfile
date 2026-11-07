@@ -17,6 +17,8 @@ COPY --from=uv /uv /usr/local/bin/uv
 RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ gfortran=4:14.2.0-1 libc6-dev pkg-config=1.8.1-4 ninja-build=1.12.1-1 libblas-dev=3.12.1-6 liblapack-dev=3.12.1-6
 COPY requirements-numpy-build.lock requirements-numpy-source.lock /tmp/
 RUN uv pip install --system --no-cache --require-hashes -r /tmp/requirements-numpy-build.lock
+COPY scripts/bounded_ninja.py /usr/local/bin/chatspark-build-ninja
+ENV NINJA=/usr/local/bin/chatspark-build-ninja
 RUN python -m pip wheel --no-deps --no-build-isolation --no-binary=numpy --require-hashes -r /tmp/requirements-numpy-source.lock --config-settings=setup-args=-Dblas=blas --config-settings=setup-args=-Dlapack=lapack --config-settings=setup-args=-Dallow-noblas=false --config-settings=compile-args=-j2 --wheel-dir=/wheels
 FROM python:3.11.17-slim-trixie@sha256:45037981b62b34b44602584fccbc4d884d5f7dc92c7ee86bb38a698a79fe1e51 AS prepared-runtime
 ARG ENGINE_REVISION
