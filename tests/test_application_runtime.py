@@ -233,6 +233,39 @@ def test_cancel_interrupts_request_local_provider_read(candidate):
     asyncio.run(run())
 
 
+def test_shutdown_remains_terminal_when_retriever_warmup_finishes(candidate, monkeypatch):
+    runtime = make_runtime(candidate)
+    entered, release = threading.Event(), threading.Event()
+
+    def warmup():
+        entered.set()
+        assert release.wait(5), "Retriever warmup was not released"
+
+    monkeypatch.setattr(runtime.retriever, "warmup", warmup)
+
+    async def run():
+        pending = asyncio.create_task(runtime.warmup())
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            await runtime.shutdown()
+            assert runtime._closed and not runtime._ready
+        finally:
+            release.set()
+            with pytest.raises(RuntimeError, match="^Serving snapshot unavailable$"):
+                await asyncio.wait_for(pending, 2)
+
+        assert runtime._closed and not runtime._ready
+        with pytest.raises(RuntimeError, match="^Serving snapshot unavailable$"):
+            runtime.readiness()
+        with pytest.raises(RuntimeError, match="^Serving snapshot unavailable$"):
+            await collect(runtime, AnswerRequestV1(question="registration"))
+        assert not runtime.llm.inputs
+        await runtime.shutdown()
+        assert runtime._closed and not runtime._ready
+
+    asyncio.run(run())
+
+
 def test_shutdown_stops_admission_and_drains_pinned_preparation(candidate):
     runtime = make_runtime(candidate, max_streams=1, preparation_slots=1)
 
