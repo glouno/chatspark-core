@@ -242,7 +242,10 @@ class SnapshotAnswerRuntime:
         warmup = getattr(self.retriever, "warmup", None)
         if warmup:
             await asyncio.to_thread(warmup)
-        self._ready = True
+        with self._active_lock:
+            if self._closed:
+                raise RuntimeError("Serving snapshot unavailable")
+            self._ready = True
 
     def readiness(self):
         if not self._ready or self._closed:
