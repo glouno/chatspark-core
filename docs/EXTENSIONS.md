@@ -93,5 +93,5 @@ does not allow providers to replace content or widen access.
 Portable hosts can classify declared file references with mutually exclusive
 `immutable_input_fields` and `build_output_fields` descriptor tuples. Unclassified
 legacy fields fail closed on the portable path. See the versioned
-[provider asset/output interface](ENGINE_PROVIDER_ASSETS.md) for fresh construction,
-selected-build associations and scoped registry composition.
+[build integration guide](BUILD_INTEGRATION.md#provider-inputs-and-fresh-outputs)
+for fresh construction, selected-build associations and scoped registry composition.

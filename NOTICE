@@ -11,9 +11,10 @@ The engine uses lxml HTML/XML parsing, not that optional validator. Third-party
 source and notices for distributed native/OS components accompany image review.
 
 The Linux baseline image builds lxml 6.1.3 from its hash-pinned source against
-Debian shared libxml2/libxslt libraries. It excludes the upstream wheel statically
-bundled GNU libiconv. The image build recipes and exact Debian source/notice
-inventory form part of the candidate redistribution dossier.
+checksum-pinned upstream libxml2/libxslt shared libraries built from source. It
+excludes the upstream wheel statically bundled GNU libiconv. The image build
+recipes, native-sources.json and exact upstream/Debian source and notice
+inventories form part of the candidate redistribution dossier.
 
 Runtime images exclude pip/setuptools/wheel and their unused Windows launchers
 after installation. Build tools remain only in the non-distributed build stage.

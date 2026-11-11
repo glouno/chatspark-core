@@ -14,6 +14,16 @@ filters in the application integration before issuing retrieval requests.
 PDF child processes bound time/input size; they do not provide a complete hostile
 file sandbox. Run ingestion as an unprivileged container with limited memory/CPU
 and no production credentials. Installed plugins are trusted executable code.
+Use trusted model files and bounded ingestion workers. An anonymous hostile-document
+service requires stronger isolation and rate limiting.
+
+The optional OCR image builds Tesseract without URL fetching, compressed-model
+archives or graphics support; it processes local bounded PNG inputs. Keep its
+language-data directory read-only and accept only reviewed, operator-installed
+data, never `.traineddata` from document uploads or profiles. These controls do
+not make native image parsing a complete sandbox. Source provenance is pinned in
+[tesseract-source.json](tesseract-source.json); model data and native dependencies
+still need the [redistribution review](docs/LICENSE_POLICY.md#container-redistribution).
 
 Report security issues through the repository's Security tab using GitHub private
 vulnerability reporting. Do not post credentials or customer data in issues.

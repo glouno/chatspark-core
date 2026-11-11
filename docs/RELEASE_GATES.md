@@ -1,9 +1,8 @@
 # Release gates
 
-The 0.3.0rc2 source release comes from a reviewed fresh-history snapshot. Historical
-staging repositories and generated customer acceptance data are not published.
-Package/image publication and production deployment remain separate operations.
-A green implementation checkpoint is not a completed release review.
+Package/image publication and production deployment are separate operations.
+A green implementation checkpoint is not a completed release review. Historical
+staging refs and generated customer acceptance data must stay outside public source.
 
 Required for each release candidate, using its exact source and artifact bytes:
 
@@ -24,22 +23,24 @@ Unresolved commercial terms for private PDF/OCR providers do not justify adding
 those providers to this distribution. Source availability exposes implementation;
 ELv2 cannot conceal an algorithm after release.
 
-## Scope of this source release
+Container vulnerability review depends on exact image bytes, dated scanner/vendor
+findings and runtime constraints. Rebuilds, dependency changes and architectures
+require matching scans, inventories, corresponding-source delivery and tests.
+Retain scoped reachability/mitigation assessments; do not claim vulnerability-free
+artifacts. Package installations have a separate native-dependency environment to
+review. See [licensing](LICENSE_POLICY.md) and [security](../SECURITY.md).
 
-The runtime snapshot is `c0d9fa6d7bd667b2a9b18045147c8574629ef3e7`;
-subsequent publication documentation does not change its engine implementation.
-Native profile v2 and plugin API 2 are required; engine request/result contract v1
-is retained. The baseline suite, independent installations, optional extraction
-integrations and isolated Qdrant checks passed for the selected runtime.
+## Historical 0.3.0rc2 publication evidence
 
-Container vulnerability review is dated and depends on exact image bytes and
-runtime constraints. Reviewed candidates retain scanner matches with scoped
-reachability/mitigation assessments; they are not claimed to be vulnerability-free.
-Rebuilds, new dependency versions and different architectures require new scans,
-inventories, corresponding-source delivery and tests. No container registry or
-package release accompanies this GitHub source publication.
+The [original release-gate record](history/0.3.0rc2-release-gates.md) is preserved
+byte-for-byte from repository revision
+[`025a22e194fdb2e7651df0a024fe87f25127cd36`](https://github.com/glouno/chatspark-core/commit/025a22e194fdb2e7651df0a024fe87f25127cd36).
+Its relative links used the original `docs/` location. It describes runtime
+`c0d9fa6d7bd667b2a9b18045147c8574629ef3e7`; later commits changed implementation.
+Its reported test results, scoped vulnerability findings and synthetic OCR
+rotated-page limitation are historical evidence, not verification of current HEAD.
 
-Self-host with trusted plugins/model files, bounded ingestion workers and an
-authenticated proxy. An anonymous hostile-document service requires stronger
-isolation and rate limiting. OCR is opt-in and its small synthetic evaluation
-retains a rotated-page limitation. See [SECURITY.md](../SECURITY.md).
+The original publication's absence of a package/registry image is not a live
+status check. Source acceptance does not establish installed or hosted acceptance;
+synthetic tests do not establish production answer quality or PDF performance
+equivalence. Apply the gates to each selected revision/artifact.

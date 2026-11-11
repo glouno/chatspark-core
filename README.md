@@ -17,141 +17,86 @@ uv sync --frozen
 uv run --frozen chatspark --help
 ```
 
-This is the 0.3.0rc2 source release. No PyPI package or hosted image is published
-by this release. Optional services and PDF providers are explicit extras; for
-example, `uv sync --frozen --extra serve --extra qdrant`. Development checks use
+Package metadata is `0.3.0rc2`. Its original source publication included no PyPI
+package or hosted image; this is not a live registry-status check. Optional services
+and PDF providers are explicit extras, for example
+`uv sync --frozen --extra serve --extra qdrant`. Development checks use
 `uv sync --frozen --group dev`.
 
 ## Hybrid search by default
 
-Normal profiles and new workspaces enable both semantic (dense) and keyword
-(sparse) retrieval. Configure a real embedding backend/model and a Qdrant index;
-missing embedding configuration fails validation instead of silently switching
-to keyword search or test fingerprints. Core never selects or downloads a model
-on your behalf.
+Normal profiles and new workspaces enable semantic (dense) and keyword (sparse)
+retrieval. Missing embedding configuration fails validation instead of silently
+switching to keyword search or test fingerprints. Core never selects a model on
+your behalf; indexing/retrieving does not download one.
 
 ```sh
-uv run chatspark workspace init --path /tmp/my-chat-workspace --copy-prompts
+uv run --frozen chatspark workspace init --path /tmp/my-chat-workspace --copy-prompts
 ```
 
-The generated `.env.example` lists the required configuration. Install the
-`qdrant` extra; set `EMBEDDING_BACKEND=openai` and `EMBEDDING_MODEL` to a model
-served by your `OPENAI_COMPAT_BASE_URL`, or install the `sentence-transformers`
-extra and explicitly select that backend and a local model. Local model selection
-requires a prepared directory; indexing/retrieving does not download models. No API key is required for a
-keyless local endpoint; configure a key separately when your provider requires it.
+The generated `.env.example` lists required configuration. Install the `qdrant`
+extra; select a real `EMBEDDING_MODEL` with `EMBEDDING_BACKEND=openai` served at
+`OPENAI_COMPAT_BASE_URL`, or install the `sentence-transformers` extra and select
+that backend with a prepared local model directory. Keyless local endpoints need
+no API key; configure a key separately when required.
 
-Build a candidate with `chatspark corpus build --source PATH --output NEW_PATH
---profile PROFILE`. It creates vectors when the selected profile enables dense
-retrieval. `--source-only` deliberately skips indexing. Lower-level engine requests
-retain explicit index control. Query and index model fingerprints must match.
+`chatspark corpus build --source PATH --output NEW_PATH --profile PROFILE`
+creates vectors when the profile enables dense retrieval. `--source-only` skips
+vectors; lower-level engine requests retain explicit index control. Index/query
+model fingerprints must match. `chatspark profiles validate --name PATH` checks
+configuration/dependencies without contacting endpoints or downloading a model.
+Serving/querying requires the selected services and built index to be available.
 
-`chatspark profiles validate --name PATH` checks embedding configuration/dependencies
-without contacting the endpoint or downloading a model. Serving/querying then
-requires the configured service and built index to be available.
+## Offline local-document build
 
-## Explicit offline example
+Run from the installed source checkout. This creates a fresh temporary root;
+configuration, source documents and mutable build output occupy separate trees.
 
 ```sh
-uv run chatspark workspace init --path /tmp/my-chat-workspace --copy-prompts --offline
-uv run chatspark profiles validate --name /tmp/my-chat-workspace/profiles/local/profile.yaml
+example_root="$(mktemp -d "${TMPDIR:-/tmp}/chatspark-offline.XXXXXX")"
+uv run --frozen chatspark workspace init --path "$example_root/config" --copy-prompts --offline
+mkdir "$example_root/documents"
+printf 'The workshop registration code is ORCHID-42.\n' > "$example_root/documents/guide.txt"
+uv run --frozen chatspark profiles validate --name "$example_root/config/profiles/local/profile.yaml"
+uv run --frozen chatspark corpus build --source "$example_root/documents" \
+  --output "$example_root/candidate" --profile "$example_root/config/profiles/local/profile.yaml"
 ```
 
-Supply owned local documents through `engine build --request … --result …` using
-engine contract v1. The bundled `example` profile and `--offline` workspaces use
-keyword-only SQLite retrieval, without a model or inference endpoint. These are
-offline examples, not the normal hybrid default. Deterministic embeddings are
-test fingerprints and must be selected explicitly for tests; they do not provide
-semantic search. Generation requires an explicit OpenAI-compatible endpoint.
+The command exits successfully and writes `candidate/build-result.json` with
+`status: succeeded`, plus `candidate/corpus.db` and a runtime manifest. This builds
+keyword-only SQLite evidence without a model, network acquisition or inference
+endpoint. It does not exercise generation: answering requires an explicit
+OpenAI-compatible endpoint. After inspecting the result, remove only this example's
+temporary root when no longer needed. Deterministic embeddings are explicit test
+fingerprints, not semantic search.
 
-For HTTP serving install the `serve` extra and select `CHATSPARK_V3_DB_PATH`.
-`uvicorn chatspark.serve.api:app --host 127.0.0.1 --no-access-log` preserves the
-version-1 chat request/source response shape. Operator-controlled
-`CHATSPARK_AUTHORIZED_FILTERS` is a JSON mapping of mandatory evidence filters;
-request and provider filters may narrow it. See [security](SECURITY.md).
+## Serving and integration
 
-Configuration workspaces contain values, optional prompts and acquisition policy.
-They do not contain downloaded code or mutable runtime state. Bundled prompts
-are generic; local overrides must exist and use only supported template variables.
-Remote prompt providers require explicit selection and allowlisting.
+Install the `serve` extra, select the intended profile and set
+`CHATSPARK_V3_DB_PATH` to its canonical database before starting
+`uvicorn chatspark.serve.api:app --host 127.0.0.1 --no-access-log`.
+The legacy API retains the v1 chat/source shape. Operator-controlled
+`CHATSPARK_AUTHORIZED_FILTERS` supplies mandatory evidence filters; request/provider
+filters may only narrow them. Follow [security constraints](SECURITY.md) before
+remote exposure.
 
-Approved providers can declare file-reference settings in their descriptor.
-Those references, like local prompt files, resolve relative to the profile or
-external section that declares them, including inherited profiles. Other
-provider values are preserved and validated by the selected settings model.
+Configuration workspaces hold values, optional prompts and acquisition policy,
+not downloaded code or mutable runtime state. Local prompt overrides must exist
+and use supported variables; remote providers require explicit allowlisting.
+Trusted hosts can use the [answer application API](docs/APPLICATION_API.md) for
+explicit snapshot/dependency composition and shared capacity.
 
-```sh
-chatspark profiles resolve example --output /tmp/profile.json --references-output /tmp/references.json
-```
+- [Native profiles](docs/NATIVE_PROFILES.md): model bindings, build/query and OCR.
+- [Extensions](docs/EXTENSIONS.md): trusted installed provider contracts.
+- [Build integration](docs/BUILD_INTEGRATION.md): profile/prompt bundles, reference
+  inventories, fresh provider outputs and per-file source URIs/acquisition times.
+- [License policy](docs/LICENSE_POLICY.md): contribution and container redistribution.
+- [Release gates](docs/RELEASE_GATES.md): exact-artifact checks and historical scope.
 
-This emits the existing resolved-profile v2 wrapper and optional
-`ProfileReferenceInventoryV1` metadata from the same profile
-instance. Python hosts can call `describe_profile_references(profile, registry)`
-through `chatspark.profiles`. Metadata preserves references and the profile digest;
-it does not open referenced files or invoke provider factories. Installed validation
-code remains trusted. Hosts separately establish ownership, approved source roots,
-content integrity and fresh-build artifact bindings. Metadata is not authorization
-or proof that an index may be reused as input to another build.
-
-[Native profiles](docs/NATIVE_PROFILES.md) · [Extension API](docs/EXTENSIONS.md) · [License policy](docs/LICENSE_POLICY.md)
-
-[Explicit source bindings](docs/ENGINE_SOURCE_BINDINGS.md) preserve per-file source
-URIs and acquisition times for immutable mixed-source builds.
-
-Trusted installed hosts can compose an explicitly scoped runtime through the
-additive [Answer application API v1](docs/APPLICATION_API.md).
-
-The reviewed runtime snapshot is
-[`c0d9fa6d`](https://github.com/glouno/chatspark-core/commit/c0d9fa6d7bd667b2a9b18045147c8574629ef3e7).
-Publication documentation may follow that snapshot without changing the engine.
-Synthetic tests do not establish production answer quality or PDF performance
-equivalence. See [release gates](docs/RELEASE_GATES.md) and
-[security constraints](SECURITY.md) before exposing a deployment.
-
-The baseline container includes serving, SQLite retrieval and pdfminer extraction.
-Qdrant support is included in the baseline image; other PDF adapters remain explicit installation extras; the separate
-`requirements-qdrant.lock` records the reviewed vector-service environment.
-The container excludes unused lxml isoschematron resources whose bundled license
-lists transformations with unresolved redistribution terms. HTML parsing is retained.
-
-`Dockerfile.ocr` extends a locally built core candidate with pinned Tesseract,
-English/French language data and PDFium rendering. It adds OCR capability; a
-profile must still explicitly select `tesseract`. Build with
+The baseline image includes serving, SQLite, Qdrant support and pdfminer.
+`Dockerfile.ocr` adds pinned Tesseract, English/French data and PDFium rendering;
+profiles must explicitly select OCR. Build it with
 `docker build -f Dockerfile.ocr --build-arg CORE_IMAGE=YOUR_CORE_IMAGE -t YOUR_OCR_IMAGE .`.
-The optional image requires its own OS/native attribution and corresponding-source
-review. Neither image bundles embedding model weights.
-
-The Linux image builds lxml from source against checksum-pinned shared
-libxml2/libxslt, avoiding the upstream wheel's statically bundled GNU libiconv.
-Corresponding source and notice bundles must accompany a reviewed image release.
-
-The image also builds NumPy from its hash-pinned source against Debian shared
-BLAS/LAPACK and GNU runtimes. It excludes the upstream wheel's vendored numerical
-libraries. Image preparation verifies the actual links and a numerical smoke
-case; exact dependency notices and corresponding source remain release artifacts.
-
-The security candidate uses Python 3.11.17 on a pinned Debian Trixie image.
-XML/XSLT and SQLite are built from checksum-verified upstream sources and loaded
-as replaceable shared libraries (libxml2 2.15.4, libxslt 1.1.45, SQLite 3.53.4).
-Their source pins and vendor checksum references are in `native-sources.json`;
-exact source archives and notices accompany a selected image release. Installing
-from a wheel uses the host's native libraries and requires a separate environment
-security review. The optional OCR image uses Tesseract 5.5.3 with explicit English
-and French language data. Candidate images remain subject to the dated release
-security review; a successful build is not that review.
-
-The optional OCR binary is built without URL fetching, compressed-model archives
-or graphics support. It processes local bounded PNG inputs; only reviewed,
-operator-installed language data is supported. Keep the language-data directory
-read-only and never accept `.traineddata` files from document uploads or profiles.
-The exact source pin is in `tesseract-source.json`. These constraints do not make
-native image parsing a complete hostile-input sandbox.
-
-Trusted build/evaluation hosts can supply an additive
-[portable profile and prompt bundle v1](docs/ENGINE_PROFILE_BUNDLE.md) through
-Python or `engine build/evaluate --profile-bundle`. Original profile values and
-digests are retained; explicit prompt text replaces obsolete file reads.
-Provider file references require the explicit
-[provider asset/output interface](docs/ENGINE_PROVIDER_ASSETS.md), with trusted
-input/output roles and associations to the selected build. They fail closed when
-those bindings are absent.
+Neither image includes embedding weights. Native source pins are executable build
+inputs, not proof of security acceptance; source, installed artifacts and hosted
+runtime each require matching verification.
