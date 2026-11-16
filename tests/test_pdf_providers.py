@@ -71,6 +71,59 @@ def test_worker_timeout_is_terminated_and_reaped():
     assert {c.pid for c in multiprocessing.active_children()} == before
 
 
+@pytest.mark.parametrize("exitcode,expected", [(0, "success"), (7, "failed"), (None, "timeout")])
+def test_pipe_eof_before_child_exit_is_not_a_provider_failure(monkeypatch, exitcode, expected):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from chatspark.extraction import pdf
+
+    clock = [0.0]
+    reaped = []
+
+    class PendingChild:
+        sentinel = object()
+
+        def __init__(self, *, target, args):
+            self.output = Path(args[1])
+            self.polls = 0
+
+        def start(self):
+            self.output.write_text(json.dumps(["success", {"text": "ORCHID-42"}]))
+
+        def join(self, timeout=None):
+            pass
+
+        @property
+        def exitcode(self):
+            self.polls += 1
+            return None if self.polls <= 2 else exitcode
+
+    def advance(seconds):
+        assert 0 < seconds <= 0.03 - clock[0]
+        clock[0] += seconds
+
+    monkeypatch.setattr(
+        pdf.multiprocessing, "get_context", lambda _: SimpleNamespace(Process=PendingChild)
+    )
+    monkeypatch.setattr(pdf, "wait", lambda *_args, **_kwargs: [PendingChild.sentinel])
+    monkeypatch.setattr(pdf.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(pdf.time, "sleep", advance)
+    monkeypatch.setattr(pdf, "_reap_worker", reaped.append)
+    status, output = pdf._run_provider(
+        b"%PDF-owned",
+        ProviderSelection(provider="pdfminer"),
+        SimpleNamespace(allowed=()),
+        "pdf",
+        deadline=0.03,
+        max_output_bytes=1024,
+    )
+    assert status == expected
+    assert output == ({"text": "ORCHID-42"} if expected == "success" else None)
+    assert len(reaped) == 1
+
+
 def test_empty_document_needs_ocr_without_downloading_models():
     assert extract_pdf_outcome(pdf_bytes("")).status == "needs_ocr"
 
@@ -133,10 +186,20 @@ def test_failure_content_never_indexed(tmp_path):
         )
     )
     assert result.status == "failed"
+    assert result.error == "Build failed: PDF extraction invalid"
     import sqlite3
 
     with sqlite3.connect(tmp_path / "candidate/corpus.db") as con:
         assert con.execute("SELECT count(*) FROM document_revisions").fetchone()[0] == 0
+
+
+def test_pdf_failure_summary_does_not_expose_provider_payloads():
+    from chatspark.runtime.errors import safe_error
+
+    error = PdfExtractionError("failed", [{"provider": "secret", "detail": "private source"}])
+    assert safe_error(error, "Build") == "Build failed: PDF extraction failed"
+    error.status = "private source"
+    assert safe_error(error, "Build") == "Build failed; inspect inputs and operator configuration"
 
 
 def test_input_size_and_fallback_exhaustion():

@@ -17,6 +17,18 @@ _SAFE_MESSAGES = (
 
 
 def safe_error(error, operation):
+    from chatspark.extraction.pdf import PdfExtractionError
+
+    if isinstance(error, PdfExtractionError) and error.status in {
+        "encrypted",
+        "unsupported",
+        "invalid",
+        "timeout",
+        "failed",
+        "output_limit",
+        "oversized",
+    }:
+        return f"{operation} failed: PDF extraction {error.status}"
     message = str(error)
     for safe in _SAFE_MESSAGES:
         if message == safe or message.startswith(safe + ":"):
