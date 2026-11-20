@@ -5,12 +5,11 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import suppress
 from contextvars import copy_context
 from dataclasses import replace
 from pathlib import Path
 from threading import Event, Lock
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -92,6 +91,31 @@ class AnswerEventV1(StrictModel):
         return self
 
 
+class StreamCompletionV1(StrictModel):
+    """Request-local closure evidence; unproved also covers cleanup in progress."""
+
+    schema_version: Literal["chatspark.stream-completion.v1"] = "chatspark.stream-completion.v1"
+    state: Literal["unproved", "succeeded", "failed"] = "unproved"
+
+
+class AnswerStreamCloseError(RuntimeError):
+    """Bounded public error; original failure is retained only as an in-memory cause."""
+
+    def __init__(self):
+        super().__init__("Application stream closure failed")
+
+
+@runtime_checkable
+class AnswerStreamV1(Protocol):
+    """Optional additive capability; legacy AnswerRuntime iterators remain valid."""
+
+    @property
+    def close_completion(self) -> StreamCompletionV1: ...
+    def __aiter__(self) -> AsyncIterator[AnswerEventV1]: ...
+    async def __anext__(self) -> AnswerEventV1: ...
+    async def aclose(self) -> None: ...
+
+
 class AnswerRuntime(Protocol):
     snapshot: ServingSnapshotV1
 
@@ -144,10 +168,14 @@ def validate_citations(text, sources):
 
 
 class _StreamControl:
-    def __init__(self):
+    def __init__(self, fail):
         self.stopped = Event()
         self.lock = Lock()
         self.provider = None
+        self.cancel_started = False
+        self.cancel_done = Event()
+        self.fail = fail
+        self.owner = None
 
     def attach(self, provider):
         with self.lock:
@@ -159,31 +187,177 @@ class _StreamControl:
         self.stopped.set()
         with self.lock:
             provider = self.provider
-        cancel = getattr(provider, "cancel", None)
-        if cancel:
-            with suppress(Exception):
+            if provider is None:
+                return
+            started = self.cancel_started
+            self.cancel_started = True
+        if started:
+            self.cancel_done.wait()  # Join a concurrent cancel before provider/iterator close.
+            return
+        try:
+            cancel = getattr(provider, "cancel", None)
+            if cancel:
                 cancel()  # Request-local interrupt; never cancel a shared model instance.
+        except BaseException as exc:
+            self.fail(exc)
+            raise
+        finally:
+            self.cancel_done.set()
 
 
 async def _thread_stream(iterator, control):
-    """Preserve attribution across thread reads and close on every exit path."""
+    """One attributed reader; its owner shields reads and joins before closing."""
     context, sentinel = copy_context(), object()
     try:
         while True:
-            task = asyncio.create_task(asyncio.to_thread(context.run, next, iterator, sentinel))
+            read = asyncio.create_task(asyncio.to_thread(context.run, next, iterator, sentinel))
             try:
-                value = await asyncio.shield(task)
-            except asyncio.CancelledError:
-                control.cancel()
-                await task  # A running synchronous read must finish before close.
+                value = await asyncio.shield(read)
+            except asyncio.CancelledError as exc:
+                control.fail(exc)
+                control.stopped.set()
+                # Even cancellation of an internal owner cannot close a live generator.
+                while not read.done():
+                    try:
+                        await asyncio.shield(read)
+                    except asyncio.CancelledError:
+                        continue
                 raise
             if value is sentinel:
                 return
             yield value
     finally:
-        control.cancel()
-        task = asyncio.create_task(asyncio.to_thread(context.run, iterator.close))
-        await asyncio.shield(task)
+        try:
+            await asyncio.to_thread(context.copy().run, control.cancel)
+        except BaseException as exc:
+            control.fail(exc)
+        try:
+            await asyncio.to_thread(context.run, iterator.close)
+        except BaseException as exc:
+            control.fail(exc)
+            raise
+
+
+class _AnswerStream:
+    """Persistent request owner, independent of read/close waiters and generator frames."""
+
+    def __init__(self, runtime, request):
+        self._runtime, self._request = runtime, request
+        self._context = None
+        self._stream = self._read_task = self._close_task = None
+        self._started = self._reserved = self._reading = False
+        self._succeeded = False
+        self._failure = None
+        self._failure_lock = Lock()
+        self._control = _StreamControl(self._fail)
+        self._control.owner = self
+
+    def _fail(self, cause):
+        with self._failure_lock:
+            if self._failure is None:
+                self._failure = AnswerStreamCloseError()
+                self._failure.__cause__ = cause
+
+    @property
+    def close_completion(self):
+        with self._failure_lock:
+            state = "failed" if self._failure else "succeeded" if self._succeeded else "unproved"
+        return StreamCompletionV1(state=state)
+
+    def __aiter__(self):
+        return self
+
+    def _start_close(self):
+        self._control.stopped.set()
+        if self._close_task is None:
+            if self._context is None:
+                self._context = copy_context()
+            self._close_task = asyncio.create_task(self._close(), context=self._context.copy())
+        return self._close_task
+
+    async def aclose(self):
+        await asyncio.shield(self._start_close())
+        if self._failure is not None:
+            raise self._failure
+
+    async def _close(self):
+        # Cancellation runs separately from the attributed read context, which may be live.
+        try:
+            await asyncio.to_thread(self._control.cancel)
+        except BaseException as exc:
+            self._fail(exc)
+        try:
+            if self._read_task is not None:
+                await asyncio.shield(self._read_task)
+        except StopAsyncIteration:
+            pass
+        except BaseException as exc:
+            self._fail(exc)
+        try:
+            if self._stream is not None:
+                await self._stream.aclose()
+        except BaseException as exc:
+            self._fail(exc)
+        # Failed or interrupted disposal retains the reservation and active owner.
+        if self._failure is None:
+            try:
+                if self._reserved:
+                    with self._runtime._active_lock:
+                        self._runtime.capacity.release_stream()
+                        self._runtime._active.discard(self._control)
+                    self._reserved = False
+                self._succeeded = True
+            except BaseException as exc:
+                self._fail(exc)
+        self._request = None
+
+    async def __anext__(self):
+        if self._close_task is not None:
+            await self.aclose()
+            raise StopAsyncIteration
+        if self._reading:
+            raise RuntimeError("Application stream already being read")
+        self._reading = True
+        try:
+            if not self._started:
+                self._started = True
+                self._context = copy_context()
+                self._runtime.readiness()
+                request = AnswerRequestV1.model_validate(self._request.model_dump())
+                if not self._runtime.capacity.acquire_stream():
+                    self._start_close()
+                    return AnswerEventV1(event="error", data={"code": "capacity_busy"})
+                self._reserved = True
+                with self._runtime._active_lock:
+                    if self._runtime._closed:
+                        self._runtime.capacity.release_stream()
+                        self._reserved = False
+                        raise RuntimeError("Serving snapshot unavailable")
+                    self._runtime._active.add(self._control)
+                self._stream = _thread_stream(
+                    self._runtime._events(request, self._control), self._control
+                )
+            self._read_task = asyncio.create_task(anext(self._stream), context=self._context.copy())
+            try:
+                return await asyncio.shield(self._read_task)
+            except StopAsyncIteration:
+                await self.aclose()
+                raise
+            except asyncio.CancelledError:
+                self._start_close()
+                # Repeated interruptions affect this waiter only; the owner keeps draining.
+                await asyncio.shield(self._close_task)
+                raise
+            except BaseException as exc:
+                self._fail(exc)
+                await self.aclose()
+                raise
+        except BaseException:
+            if self._stream is None:
+                await self.aclose()
+            raise
+        finally:
+            self._reading = False
 
 
 class SnapshotAnswerRuntime:
@@ -325,36 +499,28 @@ class SnapshotAnswerRuntime:
                 },
             )
         finally:
-            if provider_stream is not None and hasattr(provider_stream, "close"):
-                provider_stream.close()
+            if provider_stream is not None:
+                try:
+                    control.cancel()
+                except BaseException as exc:
+                    control.fail(exc)
+                    raise
+                finally:
+                    try:
+                        close = getattr(provider_stream, "close", None)
+                        if not callable(close):
+                            raise RuntimeError("Request-local provider closure unavailable")
+                        close()
+                    except BaseException as exc:
+                        control.fail(exc)
+                        raise
 
-    async def stream_answer(self, request):
-        self.readiness()
-        request = AnswerRequestV1.model_validate(request.model_dump())
-        if not self.capacity.acquire_stream():
-            yield AnswerEventV1(event="error", data={"code": "capacity_busy"})
-            return
-        control = _StreamControl()
-        with self._active_lock:
-            if self._closed:
-                self.capacity.release_stream()
-                raise RuntimeError("Serving snapshot unavailable")
-            self._active.add(control)
-        stream = _thread_stream(self._events(request, control), control)
-        try:
-            async for event in stream:
-                yield event
-        finally:
-            try:
-                await stream.aclose()
-            finally:
-                with self._active_lock:
-                    self._active.discard(control)
-                self.capacity.release_stream()
+    def stream_answer(self, request) -> AnswerStreamV1:
+        return _AnswerStream(self, request)
 
     async def shutdown(self):
         with self._active_lock:
             self._closed, self._ready = True, False
             active = list(self._active)
         for control in active:
-            control.cancel()
+            control.owner._start_close()

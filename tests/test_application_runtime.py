@@ -340,3 +340,366 @@ def test_shutdown_stops_admission_and_drains_pinned_preparation(candidate):
             await collect(runtime, AnswerRequestV1(question="registration"))
 
     asyncio.run(run())
+
+
+def test_stream_close_capability_survives_exhaustion(candidate):
+    from chatspark.application import AnswerStreamV1, StreamCompletionV1
+
+    runtime = make_runtime(candidate, max_streams=1)
+
+    async def run():
+        await runtime.warmup()
+        stream = runtime.stream_answer(AnswerRequestV1(question="registration"))
+        assert isinstance(stream, AnswerStreamV1)
+        assert stream.close_completion == StreamCompletionV1(state="unproved")
+        events = [event async for event in stream]
+        assert events[-1].event == "done"
+        assert stream.close_completion.state == "succeeded"
+        await stream.aclose()
+        assert stream.close_completion.state == "succeeded"
+        assert not runtime._active
+        await runtime.shutdown()
+
+    asyncio.run(run())
+
+
+class ClosureProbe:
+    """Controlled provider, consumed through the real snapshot/thread bridge."""
+
+    def __init__(self, *, cancel_failure=None, close_failure=None, delayed_cancel=False):
+        self.read_entered = threading.Event()
+        self.read_release = threading.Event()
+        self.read_joined = threading.Event()
+        self.cancel_entered = threading.Event()
+        self.cancel_release = threading.Event()
+        self.close_entered = threading.Event()
+        self.close_release = threading.Event()
+        self.context_exited = threading.Event()
+        self.cancel_failure, self.close_failure = cancel_failure, close_failure
+        self.cancel_calls = self.close_calls = 0
+        self.cancel_context = self.close_context = None
+        self.reading = False
+        self.iterator = self.tokens()
+        if not delayed_cancel:
+            self.cancel_release.set()
+
+    def tokens(self):
+        token = attribution.set("provider-context")
+        try:
+            yield "The registration code is "
+            self.reading = True
+            self.read_entered.set()
+            try:
+                assert self.read_release.wait(5), "Owned read barrier was not released"
+            finally:
+                self.reading = False
+                self.read_joined.set()
+            yield "ORCHID-42. [C1]"
+        finally:
+            attribution.reset(token)
+            self.context_exited.set()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self.iterator)
+
+    def cancel(self):
+        self.cancel_calls += 1
+        self.cancel_context = attribution.get()
+        self.cancel_entered.set()
+        assert self.cancel_release.wait(5), "Owned cancel barrier was not released"
+        if self.cancel_failure is not None:
+            raise self.cancel_failure
+
+    def close(self):
+        self.close_calls += 1
+        self.close_context = attribution.get()
+        assert not self.reading, "Closed a live read"
+        self.close_entered.set()
+        assert self.close_release.wait(5), "Owned close barrier was not released"
+        assert self.cancel_release.is_set(), "Provider close raced cancel"
+        self.iterator.close()
+        if self.close_failure is not None:
+            raise self.close_failure
+
+    def release(self):
+        self.cancel_release.set()
+        self.read_release.set()
+        self.close_release.set()
+
+
+async def open_probe(runtime, provider):
+    runtime.llm.stream_chat = lambda *_args, **_kwargs: provider
+    await runtime.warmup()
+    token = attribution.set("request-context")
+    try:
+        stream = runtime.stream_answer(AnswerRequestV1(question="registration"))
+        assert [(await anext(stream)).event for _ in range(3)] == ["status", "sources", "token"]
+    finally:
+        attribution.reset(token)
+    assert attribution.get() is None
+    return stream
+
+
+def assert_reserved(runtime, stream, state="unproved"):
+    assert stream.close_completion.state == state
+    assert len(runtime._active) == 1
+    assert not runtime.capacity.acquire_stream()
+
+
+@pytest.mark.parametrize("interruptions", [1, 3])
+def test_native_read_cancellation_owned_close_survives_waiters(candidate, interruptions):
+    runtime = make_runtime(candidate, max_streams=1)
+    provider = ClosureProbe(delayed_cancel=True)
+
+    async def run():
+        stream = await open_probe(runtime, provider)
+        read = asyncio.create_task(anext(stream))
+        waiters = []
+        try:
+            assert await asyncio.to_thread(provider.read_entered.wait, 2)
+            read.cancel()
+            assert await asyncio.to_thread(provider.cancel_entered.wait, 2)
+            assert_reserved(runtime, stream)
+            for _ in range(interruptions):
+                waiter = asyncio.create_task(stream.aclose())
+                waiters.append(waiter)
+                await asyncio.sleep(0)
+                waiter.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await waiter
+                read.cancel()
+                await asyncio.sleep(0)
+                assert_reserved(runtime, stream)
+            provider.read_release.set()
+            assert await asyncio.to_thread(provider.read_joined.wait, 2)
+            assert not provider.close_entered.is_set()  # Cancel must join first.
+            assert_reserved(runtime, stream)
+            provider.cancel_release.set()
+            assert await asyncio.to_thread(provider.close_entered.wait, 2)
+            assert_reserved(runtime, stream)
+            provider.close_release.set()
+            await asyncio.wait_for(stream.aclose(), 2)
+            with pytest.raises(asyncio.CancelledError):
+                await read
+            await stream.aclose()
+            assert stream.close_completion.state == "succeeded"
+            assert provider.read_joined.is_set() and provider.context_exited.is_set()
+            assert provider.cancel_calls == provider.close_calls == 1
+            assert provider.cancel_context == "request-context"
+            assert provider.close_context == "provider-context"
+            assert attribution.get() is None
+            assert not runtime._active
+            assert runtime.capacity.acquire_stream()
+            runtime.capacity.release_stream()
+        finally:
+            provider.release()
+            await asyncio.gather(read, *waiters, return_exceptions=True)
+            await runtime.shutdown()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure_at", ["cancel", "close", "both", "cancelled"])
+def test_native_close_failure_is_sticky_and_retains_lifetime(candidate, failure_at):
+    from chatspark.application import AnswerStreamCloseError
+
+    original_cancel = (
+        asyncio.CancelledError("controlled sensitive cancel detail")
+        if failure_at == "cancelled"
+        else RuntimeError("controlled sensitive cancel detail")
+    )
+    original_close = RuntimeError("controlled sensitive close detail")
+    provider = ClosureProbe(
+        cancel_failure=original_cancel if failure_at in {"cancel", "both", "cancelled"} else None,
+        close_failure=original_close if failure_at in {"close", "both"} else None,
+    )
+    runtime = make_runtime(candidate, max_streams=1)
+
+    async def run():
+        stream = await open_probe(runtime, provider)
+        read = asyncio.create_task(anext(stream))
+        try:
+            assert await asyncio.to_thread(provider.read_entered.wait, 2)
+            read.cancel()
+            assert await asyncio.to_thread(provider.cancel_entered.wait, 2)
+            assert_reserved(runtime, stream, "failed" if failure_at != "close" else "unproved")
+            provider.read_release.set()
+            assert await asyncio.to_thread(provider.close_entered.wait, 2)
+            provider.close_release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await read
+            failures = []
+            for _ in range(3):
+                with pytest.raises(AnswerStreamCloseError) as caught:
+                    await stream.aclose()
+                failures.append(caught.value)
+            assert failures[0] is failures[1] is failures[2]
+            assert failures[0].__cause__ is (
+                original_close if failure_at == "close" else original_cancel
+            )
+            assert "sensitive" not in repr(failures[0])
+            assert "sensitive" not in stream.close_completion.model_dump_json()
+            assert_reserved(runtime, stream, "failed")
+            assert provider.read_joined.is_set() and provider.context_exited.is_set()
+            assert provider.cancel_calls == provider.close_calls == 1
+            busy = await collect(runtime, AnswerRequestV1(question="registration"))
+            assert busy[-1].data == {"code": "capacity_busy"}
+            await runtime.shutdown()
+            assert_reserved(runtime, stream, "failed")
+        finally:
+            provider.release()
+            await asyncio.gather(read, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+def test_native_explicit_close_joins_inflight_read_without_canceling_reader(candidate):
+    runtime = make_runtime(candidate, max_streams=1)
+    provider = ClosureProbe()
+
+    async def run():
+        stream = await open_probe(runtime, provider)
+        read = asyncio.create_task(anext(stream))
+        try:
+            assert await asyncio.to_thread(provider.read_entered.wait, 2)
+            closer = asyncio.create_task(stream.aclose())
+            assert await asyncio.to_thread(provider.cancel_entered.wait, 2)
+            closer.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await closer
+            assert_reserved(runtime, stream)
+            provider.read_release.set()
+            provider.close_release.set()
+            await stream.aclose()
+            with pytest.raises(StopAsyncIteration):
+                await read
+            assert stream.close_completion.state == "succeeded"
+            assert provider.context_exited.is_set()
+            assert not runtime._active
+        finally:
+            provider.release()
+            await asyncio.gather(read, return_exceptions=True)
+            await runtime.shutdown()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_native_natural_exhaustion_proves_only_successful_cleanup(candidate, failed):
+    from chatspark.application import AnswerStreamCloseError
+
+    original = RuntimeError("controlled sensitive natural close detail")
+    provider = ClosureProbe(close_failure=original if failed else None)
+    provider.release()
+    runtime = make_runtime(candidate, max_streams=1)
+
+    async def run():
+        stream = await open_probe(runtime, provider)
+        assert (await anext(stream)).event == "token"
+        assert (await anext(stream)).event == "done"
+        assert_reserved(runtime, stream)
+        if failed:
+            with pytest.raises(AnswerStreamCloseError) as first:
+                await anext(stream)
+            with pytest.raises(AnswerStreamCloseError) as repeated:
+                await stream.aclose()
+            assert first.value is repeated.value
+            assert first.value.__cause__ is original
+            assert_reserved(runtime, stream, "failed")
+        else:
+            with pytest.raises(StopAsyncIteration):
+                await anext(stream)
+            await asyncio.gather(stream.aclose(), stream.aclose(), stream.aclose())
+            assert stream.close_completion.state == "succeeded"
+            assert not runtime._active
+        assert provider.cancel_calls == provider.close_calls == 1
+        assert provider.context_exited.is_set()
+        assert attribution.get() is None
+        await runtime.shutdown()
+
+    asyncio.run(run())
+
+
+def test_native_paused_close_waiter_cancellation_and_unstarted_close(candidate):
+    runtime = make_runtime(candidate, max_streams=1)
+    provider = ClosureProbe()
+
+    async def run():
+        stream = await open_probe(runtime, provider)
+        first = asyncio.create_task(stream.aclose())
+        try:
+            assert await asyncio.to_thread(provider.close_entered.wait, 2)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert_reserved(runtime, stream)
+            provider.close_release.set()
+            await asyncio.gather(stream.aclose(), stream.aclose())
+            assert stream.close_completion.state == "succeeded"
+            assert provider.cancel_calls == provider.close_calls == 1
+            assert provider.context_exited.is_set()
+            unopened = runtime.stream_answer(AnswerRequestV1(question="registration"))
+            await unopened.aclose()
+            assert unopened.close_completion.state == "succeeded"
+            with pytest.raises(StopAsyncIteration):
+                await anext(unopened)
+            assert not runtime._active
+        finally:
+            provider.release()
+            await asyncio.gather(first, return_exceptions=True)
+            await runtime.shutdown()
+
+    asyncio.run(run())
+
+
+def test_provider_without_close_cannot_manufacture_closure_proof(candidate):
+    from chatspark.application import AnswerStreamCloseError
+
+    runtime = make_runtime(candidate, max_streams=1)
+    runtime.llm.stream_chat = lambda *_args, **_kwargs: iter(["ORCHID-42. [C1]"])
+
+    async def run():
+        await runtime.warmup()
+        stream = runtime.stream_answer(AnswerRequestV1(question="registration"))
+        assert [(await anext(stream)).event for _ in range(4)] == [
+            "status",
+            "sources",
+            "token",
+            "done",
+        ]
+        with pytest.raises(AnswerStreamCloseError):
+            await anext(stream)
+        with pytest.raises(AnswerStreamCloseError):
+            await stream.aclose()
+        assert_reserved(runtime, stream, "failed")
+        await runtime.shutdown()
+
+    asyncio.run(run())
+
+
+def test_shutdown_owns_close_until_delayed_provider_disposal(candidate):
+    runtime = make_runtime(candidate, max_streams=1)
+    provider = ClosureProbe()
+
+    async def run():
+        stream = await open_probe(runtime, provider)
+        try:
+            await runtime.shutdown()
+            assert await asyncio.to_thread(provider.close_entered.wait, 2)
+            assert_reserved(runtime, stream)
+            with pytest.raises(RuntimeError, match="Serving snapshot unavailable"):
+                runtime.readiness()
+            provider.close_release.set()
+            await stream.aclose()
+            assert stream.close_completion.state == "succeeded"
+            assert not runtime._active
+            assert provider.context_exited.is_set()
+            assert provider.cancel_calls == provider.close_calls == 1
+        finally:
+            provider.release()
+            await stream.aclose()
+
+    asyncio.run(run())

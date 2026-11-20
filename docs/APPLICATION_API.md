@@ -121,3 +121,48 @@ queries/writes) fail rather than reopening a connection. Failed disposal disable
 operations but permits another `close()` attempt. Failed construction closes the
 client before propagating its original discovery error. Runtime shutdown itself
 does not dispose injected dependencies: their shared/scoped owner does.
+
+### Persistent request-local stream completion v1
+
+`SnapshotAnswerRuntime.stream_answer()` returns an `AnswerStreamV1`, still an
+`AsyncIterator[AnswerEventV1]` with `aclose()`. `AnswerRuntime` continues to accept
+legacy async iterators; hosts must detect this additive capability rather than
+infer proof from a generator frame, cancellation exception or later no-op close.
+The public exports are `AnswerStreamV1`, `StreamCompletionV1` and
+`AnswerStreamCloseError`.
+
+`stream.close_completion` is an immutable, content-free snapshot with
+`schema_version="chatspark.stream-completion.v1"` and `state`:
+
+- `unproved`: cleanup has not completed, including an unopened stream, an emitted
+  `done` event before exhaustion, or a live read/close operation.
+- `succeeded`: all request-local work has joined, applicable provider cancellation
+  and provider/iterator closure completed, the original attributed generator
+  context exited, and active-control removal and stream capacity release finished.
+- `failed`: the first disposal/owned-read failure persists. The active owner and
+  any acquired stream reservation remain retained; later closes cannot erase it.
+
+`aclose()` owns one persistent task. Concurrent calls join that task; cancellation
+of a read consumer or close waiter cannot cancel its work or release its capacity.
+A later `aclose()` joins the same outcome after cancellation or exhaustion. Failed
+closure raises the same bounded `AnswerStreamCloseError`; its first original cause
+is kept in memory as `__cause__`, never in completion fields or event payloads.
+Hosts must keep traceback/cause details out of public responses and content logs.
+A cancelled read waiter still receives `CancelledError`, independently of the
+persistent cleanup result. Read consumers must be serialized.
+
+Cancellation signals only the request-local handle. Concurrent cancellation hooks
+are joined before provider close, and in-flight synchronous reads finish before
+iterator close. There is no timeout-based success: providers must bound reads or
+support interruption, and unresolved cleanup remains unproved with its reservation.
+Providers without a `cancel()` hook retain the existing join-and-close behavior.
+Closing an unopened stream proves that it admitted no work. Busy admission keeps
+its existing single error event and reserves no capacity. A `done` event proves
+answer completion only; exhaust or close the stream before consuming closure proof.
+Shutdown remains terminal for admission, starts owned closure of its active requests,
+and never disposes shared dependencies. Hosts drain streams before disposing pools;
+failed cleanup requires host fencing/recovery rather than clearing reservations.
+
+Controlled native snapshot/provider regressions verify this contract. They do not
+qualify real neural inference, HTTP disconnect handling in a consuming application,
+OCI images or production hosting.
